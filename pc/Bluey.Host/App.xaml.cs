@@ -36,7 +36,10 @@ public partial class App : System.Windows.Application
         _session.PointChanged += point => _overlay.PointAt(point);
         _phones = new PhoneLink((packet, push, token) => _session.HandleAsync(packet, push, token));
         _phones.Start();
-        _tray = new TrayApp(settings, store, brains, _session, _phones);
+        var hints = new UsageHintsWindow();
+        hints.Show();
+        hints.SetEnabled(settings.UsageHints);
+        _tray = new TrayApp(settings, store, brains, _session, _phones, _overlay, hints);
         var gaze = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(200) };
         gaze.Tick += (_, _) => PumpFace(store);
         gaze.Start();

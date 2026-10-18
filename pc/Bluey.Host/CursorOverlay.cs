@@ -17,6 +17,8 @@ public sealed class CursorOverlay : Window
     private PointD _current;
     private PointD _target;
     private bool _hasTarget;
+    private bool _hiddenByUser;
+    private bool _hiddenForCapture;
 
     public CursorOverlay()
     {
@@ -118,7 +120,19 @@ public sealed class CursorOverlay : Window
         });
     }
 
-    public void SetVisible(bool visible) => Dispatcher.Invoke(() => Opacity = visible ? 1 : 0);
+    public void SetUserHidden(bool hidden) => Dispatcher.Invoke(() =>
+    {
+        _hiddenByUser = hidden;
+        ApplyOpacity();
+    });
+
+    public void SetVisible(bool visible) => Dispatcher.Invoke(() =>
+    {
+        _hiddenForCapture = !visible;
+        ApplyOpacity();
+    });
+
+    private void ApplyOpacity() => Opacity = _hiddenByUser || _hiddenForCapture ? 0 : 1;
 
     private void GoHome()
     {

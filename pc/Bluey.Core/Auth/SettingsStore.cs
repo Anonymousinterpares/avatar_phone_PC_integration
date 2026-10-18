@@ -34,6 +34,7 @@ public sealed class AppSettings
 {
     public BrainMode Mode { get; set; } = BrainMode.XaiLive;
     public bool ComputerControl { get; set; }
+    public bool UsageHints { get; set; } = true;
     public string PhoneSeat { get; set; } = "center";
     public string HostId { get; set; } = "urn:uuid:" + Guid.NewGuid().ToString();
     public string OpenAiApiKey { get; set; } = "";

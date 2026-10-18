@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
@@ -26,6 +27,9 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -87,11 +91,20 @@ fun BlueyScreen(
     onDoubleTap: () -> Unit,
     onHoldStart: () -> Unit,
     onHoldEnd: () -> Unit,
+    onType: (String) -> Unit,
 ) {
+    var typingOpen by remember { mutableStateOf(false) }
+    var draft by remember { mutableStateOf("") }
+    val bubble = when {
+        ui.caption.isNotEmpty() -> ui.caption
+        !ui.awake -> "Zzzz"
+        else -> ""
+    }
     Column(
         modifier = Modifier
             .fillMaxSize()
             .background(Color.Black)
+            .imePadding()
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
@@ -124,11 +137,11 @@ fun BlueyScreen(
                     }
                 },
         )
-        if (ui.caption.isNotEmpty()) {
+        if (bubble.isNotEmpty()) {
             Text(
-                ui.caption,
+                bubble,
                 color = Color.White,
-                fontSize = 18.sp,
+                fontSize = if (bubble == "Zzzz") 28.sp else 18.sp,
                 textAlign = TextAlign.Center,
                 modifier = Modifier
                     .fillMaxWidth()
@@ -143,6 +156,29 @@ fun BlueyScreen(
             fontSize = 13.sp,
         )
         HoldButton(ui = ui, onHoldStart = onHoldStart, onHoldEnd = onHoldEnd)
+        if (ui.awake) {
+            Button(onClick = { typingOpen = !typingOpen }, modifier = Modifier.fillMaxWidth()) {
+                Text(if (typingOpen) "Close typing" else "Manual typing")
+            }
+            if (typingOpen) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    TextField(
+                        value = draft,
+                        onValueChange = { draft = it },
+                        modifier = Modifier.weight(1f),
+                        label = { Text("Type instead of speaking") },
+                    )
+                    Button(onClick = {
+                        val text = draft.trim()
+                        if (text.isNotEmpty()) {
+                            draft = ""
+                            typingOpen = false
+                            onType(text)
+                        }
+                    }) { Text("Send") }
+                }
+            }
+        }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
             TextField(
                 value = ui.address,

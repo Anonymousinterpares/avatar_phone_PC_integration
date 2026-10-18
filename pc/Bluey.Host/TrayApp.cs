@@ -20,17 +20,21 @@ public sealed class TrayApp : IDisposable
     private readonly BrainClient _brains;
     private readonly CharacterSession _session;
     private readonly PhoneLink _phones;
+    private readonly CursorOverlay _overlay;
+    private readonly UsageHintsWindow _hints;
     private readonly NotifyIcon _icon;
     private readonly Icon _iconImage;
     private readonly ToolStripMenuItem _modeItem;
 
-    public TrayApp(AppSettings settings, SettingsStore store, BrainClient brains, CharacterSession session, PhoneLink phones)
+    public TrayApp(AppSettings settings, SettingsStore store, BrainClient brains, CharacterSession session, PhoneLink phones, CursorOverlay overlay, UsageHintsWindow hints)
     {
         _settings = settings;
         _store = store;
         _brains = brains;
         _session = session;
         _phones = phones;
+        _overlay = overlay;
+        _hints = hints;
         _modeItem = new ToolStripMenuItem("Mode") { Enabled = false };
         _iconImage = BlueberryIcon();
         _icon = new NotifyIcon
@@ -118,6 +122,18 @@ public sealed class TrayApp : IDisposable
             _ = _phones.BroadcastAsync(Packet.Of("session", _session.SessionJson()));
         };
         menu.Items.Add(control);
+        var hints = new ToolStripMenuItem("Show usage hints") { Checked = _settings.UsageHints, CheckOnClick = true };
+        hints.CheckedChanged += (_, _) =>
+        {
+            _settings.UsageHints = hints.Checked;
+            _store.Save(_settings);
+            _hints.SetEnabled(hints.Checked);
+        };
+        menu.Items.Add(hints);
+        menu.Items.Add("Send him home", null, (_, _) => _overlay.PointAt(null));
+        var hidden = new ToolStripMenuItem("Hide the blueberry") { CheckOnClick = true };
+        hidden.CheckedChanged += (_, _) => _overlay.SetUserHidden(hidden.Checked);
+        menu.Items.Add(hidden);
         menu.Items.Add("Phone on the left", null, (_, _) => Seat("left"));
         menu.Items.Add("Phone in the center", null, (_, _) => Seat("center"));
         menu.Items.Add("Phone on the right", null, (_, _) => Seat("right"));

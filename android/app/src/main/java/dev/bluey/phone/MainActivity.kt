@@ -111,6 +111,7 @@ class MainActivity : ComponentActivity() {
                 onDoubleTap = { if (ui.awake) sleep() else wake() },
                 onHoldStart = { holdStart() },
                 onHoldEnd = { holdEnd() },
+                onType = { sendTyped(it) },
             )
         }
         finder.start()
@@ -288,6 +289,24 @@ class MainActivity : ComponentActivity() {
         }
         ui = ui.copy(mood = "thinking", status = "Mic off. Reading what you said…")
         plan.stop()
+    }
+
+    private fun sendTyped(text: String) {
+        val said = text.trim()
+        if (!ui.awake || said.isEmpty()) return
+        if (asking) {
+            ui = ui.copy(status = "Wait for this answer, then send the next line.")
+            return
+        }
+        if (holding) {
+            holding = false
+            speechFailed = false
+            mic?.holding = false
+            plan.cancel()
+            speaker.chirp(false)
+            ui = ui.copy(micOn = false, micLevel = 0f)
+        }
+        deliverSpeech(said)
     }
 
     private fun deliverSpeech(text: String) {
