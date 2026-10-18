@@ -26,6 +26,17 @@ The key is already in `.env` as `CEREBRAS_API_KEY`. That file stays on this mach
 
 Cerebras answers on the PC when you let go of the phone. It does not keep a live voice socket open.
 
+### OpenRouter
+
+Qwen 3.8 27B, Qwen 3.8 Flash, Omni Flash, and Gemini Flash Lite, billed through your OpenRouter balance. Put the key in `.env` as `OPENROUTER_API_KEY`.
+
+1. Right-click the tray icon and choose **Sign in and keys…**
+2. Set **Mode** to **OpenRouter**.
+3. Set **OpenRouter model**. **Qwen provider** applies only to **Qwen 3.8 27B (pick a host)**: ModelRun (faster), DekaLLM (cheaper), or NEAR AI (cheaper). The other models use OpenRouter `:nitro` and ignore that host list.
+4. Click **Save**.
+
+For Qwen 3.8 27B, Bluey pins that provider and does not fall back to another host. The phone still turns speech into text. The PC sends the same tools and screenshots.
+
 **Let him use the computer** stays off until you check it in the tray. Ctrl+Alt+S stops him. Ctrl+Alt+Space wakes or sleeps him.
 
 ## Android

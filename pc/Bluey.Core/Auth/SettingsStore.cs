@@ -11,6 +11,100 @@ public enum BrainMode
     ChatGptPlan,
     Anthropic,
     Cerebras,
+    OpenRouter,
+}
+
+public static class OpenRouterProviders
+{
+    public static readonly (string Slug, string Label)[] Choices =
+    {
+        ("modelrun", "ModelRun (faster)"),
+        ("dekallm", "DekaLLM (cheaper)"),
+        ("near-ai", "NEAR AI (cheaper)"),
+    };
+
+    public static string Normalize(string? value)
+    {
+        var slug = (value ?? "").Trim().ToLowerInvariant();
+        foreach (var choice in Choices)
+            if (choice.Slug == slug) return slug;
+        return "modelrun";
+    }
+
+    public static string Label(string? value) => Normalize(value) switch
+    {
+        "dekallm" => "DekaLLM",
+        "near-ai" => "NEAR AI",
+        _ => "ModelRun",
+    };
+
+    public static Dictionary<string, object> Pin(string? value) => new()
+    {
+        ["only"] = new[] { Normalize(value) },
+        ["allow_fallbacks"] = false,
+    };
+}
+
+public readonly record struct OpenRouterRequest(
+    string Model,
+    Dictionary<string, object>? Provider,
+    string? ReasoningEffort,
+    bool DisableReasoning);
+
+public readonly record struct OpenRouterModelChoice(
+    string Id,
+    string Label,
+    string Short,
+    bool PinProvider,
+    string? ReasoningEffort,
+    bool DisableReasoning);
+
+public static class OpenRouterModels
+{
+    public const string DefaultId = "qwen/qwen3.8-27b";
+
+    public static readonly OpenRouterModelChoice[] Choices =
+    {
+        new("qwen/qwen3.8-27b", "Qwen 3.8 27B (pick a host)", "Qwen 3.8 27B", true, "none", false),
+        new("qwen/qwen3.8-flash-next:nitro", "Qwen 3.8 Flash Next :nitro", "Qwen 3.8 Flash Next", false, null, true),
+        new("qwen/qwen3.8-flash:nitro", "Qwen 3.8 Flash :nitro", "Qwen 3.8 Flash", false, null, true),
+        new("qwen/qwen3.8-omni-flash:nitro", "Qwen 3.8 Omni Flash :nitro", "Qwen 3.8 Omni Flash", false, null, true),
+        new("google/gemini-3.5-flash-lite:nitro", "Gemini 3.5 Flash Lite :nitro", "Gemini 3.5 Flash Lite", false, "minimal", false),
+        new("google/gemini-3.1-flash-lite:nitro", "Gemini 3.1 Flash Lite :nitro", "Gemini 3.1 Flash Lite", false, "none", false),
+    };
+
+    public static string Normalize(string? value)
+    {
+        var id = (value ?? "").Trim();
+        foreach (var choice in Choices)
+            if (string.Equals(choice.Id, id, StringComparison.Ordinal)) return choice.Id;
+        return DefaultId;
+    }
+
+    public static OpenRouterModelChoice Find(string? value)
+    {
+        var id = Normalize(value);
+        foreach (var choice in Choices)
+            if (choice.Id == id) return choice;
+        return Choices[0];
+    }
+
+    public static OpenRouterRequest RequestShape(string? model, string? provider)
+    {
+        var choice = Find(model);
+        return new(
+            choice.Id,
+            choice.PinProvider ? OpenRouterProviders.Pin(provider) : null,
+            choice.ReasoningEffort,
+            choice.DisableReasoning);
+    }
+
+    public static string RouteLabel(string? model, string? provider)
+    {
+        var choice = Find(model);
+        if (!choice.PinProvider) return choice.Short;
+        return choice.Short + " · " + OpenRouterProviders.Label(provider);
+    }
 }
 
 public sealed class ChatGptAccount
@@ -41,12 +135,15 @@ public sealed class AppSettings
     public string XaiApiKey { get; set; } = "";
     public string AnthropicApiKey { get; set; } = "";
     public string CerebrasApiKey { get; set; } = "";
+    public string OpenRouterApiKey { get; set; } = "";
     public string OpenAiRealtimeModel { get; set; } = "gpt-realtime-2.1";
     public string OpenAiTextModel { get; set; } = "gpt-6.1-sol";
     public string XaiVoiceModel { get; set; } = "grok-voice-latest";
     public string XaiTextModel { get; set; } = "grok-4.7";
     public string AnthropicModel { get; set; } = "claude-sonnet-4-5";
     public string CerebrasModel { get; set; } = "qwen-3.8-27b";
+    public string OpenRouterModel { get; set; } = "qwen/qwen3.8-27b";
+    public string OpenRouterProvider { get; set; } = "modelrun";
     public string ChatGptModel { get; set; } = "gpt-6.1-sol";
     public ChatGptAccount? ChatGpt { get; set; }
 
@@ -57,6 +154,7 @@ public sealed class AppSettings
         BrainMode.ChatGptPlan => ChatGpt?.CanUsePlan == true,
         BrainMode.Anthropic => !string.IsNullOrWhiteSpace(AnthropicApiKey),
         BrainMode.Cerebras => !string.IsNullOrWhiteSpace(CerebrasApiKey),
+        BrainMode.OpenRouter => !string.IsNullOrWhiteSpace(OpenRouterApiKey),
         _ => false,
     };
 
@@ -98,6 +196,13 @@ public sealed class SettingsStore
             var key = DotEnv.Get("CEREBRAS_API_KEY");
             if (!string.IsNullOrWhiteSpace(key)) settings.CerebrasApiKey = key;
         }
+        if (string.IsNullOrWhiteSpace(settings.OpenRouterApiKey))
+        {
+            var key = DotEnv.Get("OPENROUTER_API_KEY");
+            if (!string.IsNullOrWhiteSpace(key)) settings.OpenRouterApiKey = key;
+        }
+        settings.OpenRouterProvider = OpenRouterProviders.Normalize(settings.OpenRouterProvider);
+        settings.OpenRouterModel = OpenRouterModels.Normalize(settings.OpenRouterModel);
         return settings;
     }
 

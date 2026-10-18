@@ -286,6 +286,9 @@ public sealed class SettingsForm : Form
     private readonly TextBox _openai = new() { Width = 280, UseSystemPasswordChar = true };
     private readonly TextBox _anthropic = new() { Width = 280, UseSystemPasswordChar = true };
     private readonly TextBox _cerebras = new() { Width = 280, UseSystemPasswordChar = true };
+    private readonly TextBox _openRouter = new() { Width = 280, UseSystemPasswordChar = true };
+    private readonly ComboBox _model = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 280, DropDownWidth = 340 };
+    private readonly ComboBox _route = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 280 };
     private readonly TextBox _ask = new() { Width = 280 };
 
     public string AskText => _ask.Text;
@@ -297,28 +300,49 @@ public sealed class SettingsForm : Form
         StartPosition = FormStartPosition.CenterScreen;
         MinimizeBox = false;
         MaximizeBox = false;
-        ClientSize = new System.Drawing.Size(460, focusAsk ? 490 : 430);
+        ClientSize = new System.Drawing.Size(460, focusAsk ? 600 : 540);
         var layout = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(12), ColumnCount = 2, AutoSize = true };
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 140));
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        _mode.Items.AddRange(new object[] { "Grok live (xAI API key)", "OpenAI live (API key)", "ChatGPT plan", "Claude API key", "Cerebras (qwen-3.8-27b)" });
+        _mode.Items.AddRange(new object[] { "Grok live (xAI API key)", "OpenAI live (API key)", "ChatGPT plan", "Claude API key", "Cerebras (qwen-3.8-27b)", "OpenRouter" });
         _mode.SelectedIndex = settings.Mode switch
         {
             BrainMode.OpenAiLive => 1,
             BrainMode.ChatGptPlan => 2,
             BrainMode.Anthropic => 3,
             BrainMode.Cerebras => 4,
+            BrainMode.OpenRouter => 5,
             _ => 0,
         };
         _xai.Text = settings.XaiApiKey;
         _openai.Text = settings.OpenAiApiKey;
         _anthropic.Text = settings.AnthropicApiKey;
         _cerebras.Text = settings.CerebrasApiKey;
+        _openRouter.Text = settings.OpenRouterApiKey;
+        var selectedModel = OpenRouterModels.Normalize(settings.OpenRouterModel);
+        for (var i = 0; i < OpenRouterModels.Choices.Length; i++)
+        {
+            _model.Items.Add(OpenRouterModels.Choices[i].Label);
+            if (OpenRouterModels.Choices[i].Id == selectedModel) _model.SelectedIndex = i;
+        }
+        if (_model.SelectedIndex < 0) _model.SelectedIndex = 0;
+        var selectedRoute = OpenRouterProviders.Normalize(settings.OpenRouterProvider);
+        for (var i = 0; i < OpenRouterProviders.Choices.Length; i++)
+        {
+            _route.Items.Add(OpenRouterProviders.Choices[i].Label);
+            if (OpenRouterProviders.Choices[i].Slug == selectedRoute) _route.SelectedIndex = i;
+        }
+        if (_route.SelectedIndex < 0) _route.SelectedIndex = 0;
+        _model.SelectedIndexChanged += (_, _) => UpdateProviderLock();
+        UpdateProviderLock();
         Add(layout, "Mode", _mode);
         Add(layout, "xAI API key", _xai);
         Add(layout, "OpenAI API key", _openai);
         Add(layout, "Anthropic API key", _anthropic);
         Add(layout, "Cerebras key", _cerebras);
+        Add(layout, "OpenRouter key", _openRouter);
+        Add(layout, "OpenRouter model", _model);
+        Add(layout, "Qwen provider", _route);
         if (focusAsk) Add(layout, "Ask", _ask);
         var chat = new Label
         {
@@ -345,13 +369,23 @@ public sealed class SettingsForm : Form
                 2 => BrainMode.ChatGptPlan,
                 3 => BrainMode.Anthropic,
                 4 => BrainMode.Cerebras,
+                5 => BrainMode.OpenRouter,
                 _ => BrainMode.XaiLive,
             };
+            settings.OpenRouterApiKey = _openRouter.Text.Trim();
+            settings.OpenRouterModel = OpenRouterModels.Choices[Math.Max(0, _model.SelectedIndex)].Id;
+            settings.OpenRouterProvider = OpenRouterProviders.Choices[Math.Max(0, _route.SelectedIndex)].Slug;
             settings.XaiApiKey = _xai.Text.Trim();
             settings.OpenAiApiKey = _openai.Text.Trim();
             settings.AnthropicApiKey = _anthropic.Text.Trim();
             settings.CerebrasApiKey = _cerebras.Text.Trim();
         };
+    }
+
+    private void UpdateProviderLock()
+    {
+        var index = _model.SelectedIndex;
+        _route.Enabled = index >= 0 && index < OpenRouterModels.Choices.Length && OpenRouterModels.Choices[index].PinProvider;
     }
 
     private static void Add(TableLayoutPanel layout, string label, Control control)

@@ -47,6 +47,7 @@ public sealed class CharacterSession
             BrainMode.ChatGptPlan => "ChatGPT plan — " + ready,
             BrainMode.Anthropic => "Claude API key — " + ready,
             BrainMode.Cerebras => "Cerebras " + settings.CerebrasModel + " — " + ready,
+            BrainMode.OpenRouter => "OpenRouter " + OpenRouterModels.RouteLabel(settings.OpenRouterModel, settings.OpenRouterProvider) + " — " + ready,
             _ => settings.Mode.ToString(),
         };
     }
@@ -60,6 +61,7 @@ public sealed class CharacterSession
             BrainMode.OpenAiLive => "openai",
             BrainMode.ChatGptPlan => "chatgpt",
             BrainMode.Cerebras => "cerebras",
+            BrainMode.OpenRouter => "openrouter",
             _ => "anthropic",
         };
         return JsonSerializer.Serialize(new
@@ -67,6 +69,7 @@ public sealed class CharacterSession
             mode = settings.Mode.ToString(),
             realtime = settings.RunsRealtimeOnPhone && settings.ModeIsReady(),
             provider,
+            route = settings.Mode == BrainMode.OpenRouter ? OpenRouterModels.RouteLabel(settings.OpenRouterModel, settings.OpenRouterProvider) : "",
             computerControl = settings.ComputerControl,
         });
     }

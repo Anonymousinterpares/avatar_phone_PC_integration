@@ -325,7 +325,8 @@ public sealed class BrainClient
         return settings.Mode switch
         {
             BrainMode.Anthropic => await AnthropicAsync(settings, ask, cancellationToken),
-            BrainMode.Cerebras => await CerebrasAsync(settings, ask, cancellationToken),
+            BrainMode.Cerebras => await ChatCompletionsAsync(ask, ChatRoute.Cerebras(settings), cancellationToken),
+            BrainMode.OpenRouter => await ChatCompletionsAsync(ask, ChatRoute.OpenRouter(settings), cancellationToken),
             BrainMode.ChatGptPlan => await ResponsesAsync(settings, ask, "https://api.openai.com/v1/responses", await ChatGptAccessAsync(settings, cancellationToken), settings.ChatGptModel, cancellationToken),
             BrainMode.OpenAiLive => await ResponsesAsync(settings, ask, "https://api.openai.com/v1/responses", settings.OpenAiApiKey, settings.OpenAiTextModel, cancellationToken),
             _ => await ResponsesAsync(settings, ask, "https://api.x.ai/v1/responses", settings.XaiApiKey, settings.XaiTextModel, cancellationToken),
@@ -619,10 +620,43 @@ public sealed class BrainClient
         return ParseAnthropic(body);
     }
 
-    private async Task<ModelReply> CerebrasAsync(AppSettings settings, AskInput ask, CancellationToken cancellationToken)
+    private sealed record ChatRoute(
+        string Url,
+        string Key,
+        string Model,
+        Dictionary<string, object>? Provider,
+        string Name,
+        string MissingKey,
+        string? ReasoningEffort = "none",
+        bool DisableReasoning = false)
     {
-        if (string.IsNullOrWhiteSpace(settings.CerebrasApiKey))
-            throw new InvalidOperationException("Add CEREBRAS_API_KEY to the .env file, or paste a Cerebras key in the tray.");
+        public static ChatRoute Cerebras(AppSettings settings) => new(
+            "https://api.cerebras.ai/v1/chat/completions",
+            settings.CerebrasApiKey,
+            settings.CerebrasModel,
+            null,
+            "Cerebras",
+            "Add CEREBRAS_API_KEY to the .env file, or paste a Cerebras key in the tray.");
+
+        public static ChatRoute OpenRouter(AppSettings settings)
+        {
+            var shape = OpenRouterModels.RequestShape(settings.OpenRouterModel, settings.OpenRouterProvider);
+            return new(
+                "https://openrouter.ai/api/v1/chat/completions",
+                settings.OpenRouterApiKey,
+                shape.Model,
+                shape.Provider,
+                "OpenRouter",
+                "Add OPENROUTER_API_KEY to the .env file, or paste an OpenRouter key in the tray.",
+                shape.ReasoningEffort,
+                shape.DisableReasoning);
+        }
+    }
+
+    private async Task<ModelReply> ChatCompletionsAsync(AskInput ask, ChatRoute route, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(route.Key))
+            throw new InvalidOperationException(route.MissingKey);
         var messages = new List<object>
         {
             new Dictionary<string, object> { ["role"] = "system", ["content"] = Personality.Instructions(ask.ComputerControl) },
@@ -661,21 +695,47 @@ public sealed class BrainClient
         }
         var payload = new Dictionary<string, object?>
         {
-            ["model"] = settings.CerebrasModel,
-            ["reasoning_effort"] = "none",
+            ["model"] = route.Model,
             ["max_completion_tokens"] = 1024,
             ["messages"] = messages,
             ["tools"] = ToolCatalog.ChatTools(ask.ComputerControl),
             ["tool_choice"] = "auto",
         };
-        using var request = new HttpRequestMessage(HttpMethod.Post, "https://api.cerebras.ai/v1/chat/completions");
-        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", settings.CerebrasApiKey.Trim());
+        if (route.ReasoningEffort != null) payload["reasoning_effort"] = route.ReasoningEffort;
+        if (route.DisableReasoning)
+            payload["reasoning"] = new Dictionary<string, object> { ["enabled"] = false };
+        if (route.Provider != null) payload["provider"] = route.Provider;
+        using var request = new HttpRequestMessage(HttpMethod.Post, route.Url);
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", route.Key.Trim());
+        request.Headers.TryAddWithoutValidation("X-Title", "Bluey PC");
         request.Content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
         using var response = await _http.SendAsync(request, cancellationToken);
         var body = await response.Content.ReadAsStringAsync(cancellationToken);
         if (!response.IsSuccessStatusCode)
-            throw new InvalidOperationException($"Cerebras request failed ({(int)response.StatusCode}).");
+        {
+            var detail = BriefApiError(body);
+            throw new InvalidOperationException(route.Name + " request failed (" + (int)response.StatusCode + ")." + (detail.Length == 0 ? "" : " " + detail));
+        }
         return ParseChatCompletion(body);
+    }
+
+    private static string BriefApiError(string body)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(body);
+            if (!doc.RootElement.TryGetProperty("error", out var error)) return "";
+            var message = error.ValueKind == JsonValueKind.String
+                ? error.GetString()
+                : error.ValueKind == JsonValueKind.Object && error.TryGetProperty("message", out var nested) ? nested.GetString() : "";
+            if (string.IsNullOrWhiteSpace(message)) return "";
+            message = message.Replace('\n', ' ').Trim();
+            return message.Length > 160 ? message[..160] : message;
+        }
+        catch (JsonException)
+        {
+            return "";
+        }
     }
 
     private static Dictionary<string, object> CerebrasTurn(HistoryTurn turn, bool picture)

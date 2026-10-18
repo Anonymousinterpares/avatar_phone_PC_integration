@@ -35,6 +35,7 @@ class MainActivity : ComponentActivity() {
     @Volatile private var holding = false
     @Volatile private var asking = false
     @Volatile private var provider = ""
+    @Volatile private var route = ""
     @Volatile private var speechFailed = false
     @Volatile private var connecting = false
     private var captionGeneration = 0
@@ -364,6 +365,7 @@ class MainActivity : ComponentActivity() {
 
     private fun engineName(): String = when (provider) {
         "cerebras" -> "Cerebras"
+        "openrouter" -> "OpenRouter"
         "chatgpt", "openai" -> "ChatGPT"
         "anthropic" -> "Claude"
         "xai" -> "Grok"
@@ -375,6 +377,10 @@ class MainActivity : ComponentActivity() {
         realtime && provider == "xai" -> "Hold the face. This phone streams your voice to Grok."
         realtime -> "Hold the face to talk."
         provider == "cerebras" -> "Hold the face. This phone turns speech into text, then Cerebras answers."
+        provider == "openrouter" -> {
+            val who = if (route.isBlank()) "OpenRouter" else "OpenRouter ($route)"
+            "Hold the face. This phone turns speech into text, then $who answers."
+        }
         provider == "chatgpt" -> "Hold the face. This phone turns speech into text, then ChatGPT answers."
         provider == "anthropic" -> "Hold the face. This phone turns speech into text, then Claude answers."
         else -> "Hold the face. This phone turns speech into text, then the PC answers."
@@ -398,6 +404,7 @@ class MainActivity : ComponentActivity() {
         val wasLive = realtime
         realtime = session.optBoolean("realtime")
         provider = session.optString("provider", "")
+        route = session.optString("route", "")
         if (!ui.awake) return
         if (realtime) startMic() else stopMic()
         ui = ui.copy(status = statusLine())

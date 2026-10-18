@@ -187,6 +187,66 @@ public class CoreTests
         settings.CerebrasApiKey = "csk-test";
         settings.CerebrasModel = "qwen-3.8-27b";
         Assert.True(settings.ModeIsReady());
+        settings.Mode = BrainMode.OpenRouter;
+        Assert.False(settings.ModeIsReady());
+        settings.OpenRouterApiKey = "sk-or-test";
+        Assert.True(settings.ModeIsReady());
+        Assert.False(settings.RunsRealtimeOnPhone);
+    }
+
+    [Fact]
+    public void OpenRouter_pins_the_chosen_provider_and_rejects_unknown_ones()
+    {
+        Assert.Equal("modelrun", OpenRouterProviders.Normalize("nope"));
+        Assert.Equal("near-ai", OpenRouterProviders.Normalize("near-ai"));
+        var pin = OpenRouterProviders.Pin("dekallm");
+        Assert.Equal(new[] { "dekallm" }, (string[])pin["only"]);
+        Assert.Equal(false, pin["allow_fallbacks"]);
+        Assert.Equal("ModelRun", OpenRouterProviders.Label("modelrun"));
+    }
+
+    [Fact]
+    public void OpenRouter_nitro_models_skip_the_host_pin()
+    {
+        Assert.Equal("qwen/qwen3.8-27b", OpenRouterModels.Normalize(null));
+        Assert.Equal("qwen/qwen3.8-27b", OpenRouterModels.Normalize("not-a-model"));
+        Assert.Equal("qwen/qwen3.8-flash-next:nitro", OpenRouterModels.Normalize("qwen/qwen3.8-flash-next:nitro"));
+
+        var pinned = OpenRouterModels.RequestShape("qwen/qwen3.8-27b", "dekallm");
+        Assert.Equal("qwen/qwen3.8-27b", pinned.Model);
+        Assert.NotNull(pinned.Provider);
+        Assert.Equal(new[] { "dekallm" }, (string[])pinned.Provider!["only"]);
+        Assert.Equal(false, pinned.Provider["allow_fallbacks"]);
+        Assert.Equal("none", pinned.ReasoningEffort);
+        Assert.False(pinned.DisableReasoning);
+
+        var flash = OpenRouterModels.RequestShape("qwen/qwen3.8-flash:nitro", "modelrun");
+        Assert.Equal("qwen/qwen3.8-flash:nitro", flash.Model);
+        Assert.Null(flash.Provider);
+        Assert.Null(flash.ReasoningEffort);
+        Assert.True(flash.DisableReasoning);
+
+        var next = OpenRouterModels.RequestShape("qwen/qwen3.8-flash-next:nitro", "near-ai");
+        Assert.Null(next.Provider);
+        Assert.True(next.DisableReasoning);
+
+        var omni = OpenRouterModels.RequestShape("qwen/qwen3.8-omni-flash:nitro", "near-ai");
+        Assert.Null(omni.Provider);
+        Assert.True(omni.DisableReasoning);
+
+        var gemini35 = OpenRouterModels.RequestShape("google/gemini-3.5-flash-lite:nitro", "modelrun");
+        Assert.Null(gemini35.Provider);
+        Assert.Equal("minimal", gemini35.ReasoningEffort);
+        Assert.False(gemini35.DisableReasoning);
+
+        var gemini31 = OpenRouterModels.RequestShape("google/gemini-3.1-flash-lite:nitro", "dekallm");
+        Assert.Null(gemini31.Provider);
+        Assert.Equal("none", gemini31.ReasoningEffort);
+        Assert.False(gemini31.DisableReasoning);
+
+        Assert.Equal("Qwen 3.8 27B · DekaLLM", OpenRouterModels.RouteLabel("qwen/qwen3.8-27b", "dekallm"));
+        Assert.Equal("Qwen 3.8 Flash", OpenRouterModels.RouteLabel("qwen/qwen3.8-flash:nitro", "modelrun"));
+        Assert.Equal("Gemini 3.1 Flash Lite", OpenRouterModels.RouteLabel("google/gemini-3.1-flash-lite:nitro", "modelrun"));
     }
 
     [Fact]
@@ -220,12 +280,25 @@ public class CoreTests
     {
         var path = Path.Combine(Path.GetTempPath(), "bluey-test-" + Guid.NewGuid().ToString("N"), "settings.bin");
         var store = new SettingsStore(path);
-        var settings = new AppSettings { Mode = BrainMode.OpenAiLive, OpenAiApiKey = "sk-test", PhoneSeat = "left" };
+        var settings = new AppSettings
+        {
+            Mode = BrainMode.OpenAiLive,
+            OpenAiApiKey = "sk-test",
+            PhoneSeat = "left",
+            OpenRouterModel = "google/gemini-3.5-flash-lite:nitro",
+            OpenRouterProvider = "NEAR-AI",
+        };
         store.Save(settings);
         var loaded = store.Load();
         Assert.Equal(BrainMode.OpenAiLive, loaded.Mode);
         Assert.Equal("sk-test", loaded.OpenAiApiKey);
         Assert.Equal("left", loaded.PhoneSeat);
+        Assert.Equal("google/gemini-3.5-flash-lite:nitro", loaded.OpenRouterModel);
+        Assert.Equal("near-ai", loaded.OpenRouterProvider);
+        store.Save(new AppSettings { OpenRouterModel = "nope", OpenRouterProvider = "nope" });
+        loaded = store.Load();
+        Assert.Equal("qwen/qwen3.8-27b", loaded.OpenRouterModel);
+        Assert.Equal("modelrun", loaded.OpenRouterProvider);
         Directory.Delete(Path.GetDirectoryName(path)!, true);
     }
 

@@ -191,7 +191,7 @@ public sealed class UsageHintsWindow : Window
         }),
         ("The tray", new[]
         {
-            "Sign in and keys… picks Cerebras, Grok, ChatGPT, or Claude.",
+            "Sign in and keys… picks Cerebras, OpenRouter, Grok, ChatGPT, or Claude. OpenRouter model picks Qwen 3.8 27B or a :nitro model. The host pin applies only to Qwen 3.8 27B.",
             "Phone on the left, center, or right is where his eyes rest.",
             "Send him home parks the blueberry at the bottom of the screen.",
             "Hide the blueberry takes him off the screen without quitting.",
