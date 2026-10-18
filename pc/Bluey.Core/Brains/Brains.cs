@@ -10,7 +10,53 @@ public sealed record ToolCall(string CallId, string Name, string ArgumentsJson);
 
 public sealed record CompletedTool(string CallId, string Name, string ArgumentsJson, string Output);
 
-public sealed record HistoryTurn(string Role, string Text);
+public sealed record HistoryTurn(
+    string Role,
+    string Text,
+    byte[]? Jpeg = null,
+    string? ScreenText = null,
+    DateTimeOffset? SeenAt = null,
+    string? AppName = null);
+
+public static class LookMemory
+{
+    public static readonly TimeSpan Lifetime = TimeSpan.FromSeconds(90);
+
+    public static bool SendPixels(HistoryTurn turn, bool newerShot, DateTimeOffset now) =>
+        !newerShot
+        && turn.Role == "user"
+        && turn.Jpeg is { Length: > 0 }
+        && turn.SeenAt is { } seen
+        && now - seen <= Lifetime;
+
+    public static HistoryTurn? LatestFresh(IReadOnlyList<HistoryTurn> history, bool newerShot, DateTimeOffset now)
+    {
+        if (newerShot) return null;
+        for (var i = history.Count - 1; i >= 0; i--)
+            if (SendPixels(history[i], false, now)) return history[i];
+        return null;
+    }
+
+    public static HistoryTurn Expire(HistoryTurn turn, DateTimeOffset now) =>
+        turn.Jpeg == null || SendPixels(turn, false, now) ? turn : Release(turn, note: true);
+
+    public static HistoryTurn Release(HistoryTurn turn, bool note)
+    {
+        if (turn.Jpeg == null && string.IsNullOrEmpty(turn.ScreenText)) return turn;
+        var text = turn.Text;
+        if (note && !text.Contains("Last look:", StringComparison.Ordinal))
+        {
+            var line = string.IsNullOrWhiteSpace(turn.AppName) ? "Last look expired." : "Last look: " + turn.AppName + ".";
+            text = text.TrimEnd() + "\n" + line;
+        }
+        return turn with { Jpeg = null, ScreenText = null, Text = text };
+    }
+
+    public static string VisibleText(HistoryTurn turn, bool withScreen) =>
+        withScreen && !string.IsNullOrWhiteSpace(turn.ScreenText)
+            ? turn.Text + "\n\nScreen details:\n" + turn.ScreenText
+            : turn.Text;
+}
 
 public sealed class AskInput
 {
@@ -35,7 +81,7 @@ public static class Personality
 
     Point whenever you can. If the question is about anything on the screen ("what's this?", "what does this mean?"), call look_at_screen, then point_at (or point_at_spot) the thing you're talking about, then give your one-line answer. "This", "that" and "here" mean what's at the user's mouse pointer, which look_at_screen tells you. Point at the most specific thing (a word or number rather than a whole line). For shapes, arrows or charts with no text, use point_at_spot. If the screen may have changed, look again. When the user says goodbye or asks you to sleep, reply with a very short goodbye and call go_to_sleep.
 
-    Each request includes a screenshot of the front window, and every look or action replaces it. That picture is the only screen you can see. Read the names in the picture, including lists. The text dump often misses custom-drawn apps such as Spotify, so a missing line does not mean the row is absent. Never say an app, playlist, or row is missing while this turn's picture still shows it. If the user says you picked the wrong item, click the matching visible name. Do not search up a public substitute while their own list is in the picture.
+    You see a screenshot only after look_at_screen or after an action. That picture stays with the turn that took it for 90 seconds, then only a one-line note remains. Use the stored picture when the user is talking about what just happened. It is not a live view. Call look_at_screen again before clicking if it may be out of date, when you have no picture, and when they say "this", "that", or "here". Read the names in the picture, including lists. The text dump often misses custom-drawn apps such as Spotify, so a missing line does not mean the row is absent. Never say an app, playlist, or row is missing while the picture still shows it. If the user says you picked the wrong item, click the matching visible name. Do not search up a public substitute while their own list is in the picture.
     """;
 
     public const string Computer = """
@@ -408,11 +454,11 @@ public sealed class BrainClient
         if (string.IsNullOrWhiteSpace(key))
             throw new InvalidOperationException("This mode has no credential yet. Set it in the tray.");
         var input = new List<object>();
-        foreach (var turn in ask.History.TakeLast(12))
-        {
-            input.Add(new Dictionary<string, object> { ["role"] = turn.Role, ["content"] = turn.Text });
-        }
-        input.Add(UserContent(ask));
+        var recent = RecentTurns(ask);
+        var pictured = PictureTurn(ask, recent, out var carried);
+        foreach (var turn in recent)
+            input.Add(ResponsesTurn(turn, ReferenceEquals(turn, pictured)));
+        input.Add(UserContent(ask, carried));
         foreach (var tool in ask.PriorTools)
         {
             input.Add(new Dictionary<string, object>
@@ -453,31 +499,83 @@ public sealed class BrainClient
         return SseParser.Parse(body);
     }
 
-    private static Dictionary<string, object> UserContent(AskInput ask)
+    private static List<HistoryTurn> RecentTurns(AskInput ask) => ask.History.TakeLast(12).ToList();
+
+    private static HistoryTurn? PictureTurn(AskInput ask, IReadOnlyList<HistoryTurn> recent, out HistoryTurn? carried)
     {
-        var text = ask.UserText;
-        if (!string.IsNullOrWhiteSpace(ask.ScreenText))
-            text += "\n\nScreen details:\n" + ask.ScreenText;
-        var content = new List<object> { new Dictionary<string, object> { ["type"] = "input_text", ["text"] = text } };
-        if (ask.Jpeg is { Length: > 0 })
+        var latest = LookMemory.LatestFresh(ask.History, ask.Jpeg is { Length: > 0 }, DateTimeOffset.UtcNow);
+        carried = null;
+        if (latest == null) return null;
+        if (recent.Any(turn => ReferenceEquals(turn, latest))) return latest;
+        carried = latest;
+        return null;
+    }
+
+    private static Dictionary<string, object> ResponsesTurn(HistoryTurn turn, bool picture)
+    {
+        var text = LookMemory.VisibleText(turn, picture);
+        if (!picture || turn.Jpeg is not { Length: > 0 })
+            return new Dictionary<string, object> { ["role"] = turn.Role, ["content"] = text };
+        return new Dictionary<string, object>
         {
-            content.Add(new Dictionary<string, object>
+            ["role"] = turn.Role,
+            ["content"] = new List<object>
             {
-                ["type"] = "input_image",
-                ["image_url"] = "data:image/jpeg;base64," + Convert.ToBase64String(ask.Jpeg),
-            });
+                new Dictionary<string, object> { ["type"] = "input_text", ["text"] = text },
+                ImagePart("input_image", "image_url", turn.Jpeg, nested: false),
+            },
+        };
+    }
+
+    private static void CurrentLook(AskInput ask, HistoryTurn? carried, out string text, out string? screen, out byte[]? jpeg)
+    {
+        text = ask.UserText;
+        screen = ask.ScreenText;
+        jpeg = ask.Jpeg;
+        if (jpeg is not { Length: > 0 } && carried?.Jpeg is { Length: > 0 })
+        {
+            jpeg = carried.Jpeg;
+            if (string.IsNullOrWhiteSpace(screen)) screen = carried.ScreenText;
+            text += "\n\nThis picture is the stored look from an earlier turn.";
         }
+    }
+
+    private static Dictionary<string, object> UserContent(AskInput ask, HistoryTurn? carried)
+    {
+        CurrentLook(ask, carried, out var text, out var screen, out var jpeg);
+        if (!string.IsNullOrWhiteSpace(screen))
+            text += "\n\nScreen details:\n" + screen;
+        var content = new List<object> { new Dictionary<string, object> { ["type"] = "input_text", ["text"] = text } };
+        if (jpeg is { Length: > 0 } image)
+            content.Add(ImagePart("input_image", "image_url", image, nested: false));
         return new Dictionary<string, object> { ["role"] = "user", ["content"] = content };
     }
+
+    private static Dictionary<string, object> ImagePart(string type, string field, byte[] jpeg, bool nested) =>
+        nested
+            ? new Dictionary<string, object>
+            {
+                ["type"] = type,
+                [field] = new Dictionary<string, object> { ["url"] = DataUri(jpeg) },
+            }
+            : new Dictionary<string, object>
+            {
+                ["type"] = type,
+                [field] = DataUri(jpeg),
+            };
+
+    private static string DataUri(byte[] jpeg) => "data:image/jpeg;base64," + Convert.ToBase64String(jpeg);
 
     private async Task<ModelReply> AnthropicAsync(AppSettings settings, AskInput ask, CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(settings.AnthropicApiKey))
             throw new InvalidOperationException("Add an Anthropic API key in the tray. A Claude Pro or Max login cannot be used inside this app.");
         var messages = new List<object>();
-        foreach (var turn in ask.History.TakeLast(12))
-            messages.Add(new Dictionary<string, object> { ["role"] = turn.Role == "assistant" ? "assistant" : "user", ["content"] = turn.Text });
-        messages.Add(AnthropicUser(ask));
+        var recent = RecentTurns(ask);
+        var pictured = PictureTurn(ask, recent, out var carried);
+        foreach (var turn in recent)
+            messages.Add(AnthropicTurn(turn, ReferenceEquals(turn, pictured)));
+        messages.Add(AnthropicUser(ask, carried));
         if (ask.PriorTools.Count > 0)
         {
             messages.Add(new Dictionary<string, object>
@@ -529,9 +627,11 @@ public sealed class BrainClient
         {
             new Dictionary<string, object> { ["role"] = "system", ["content"] = Personality.Instructions(ask.ComputerControl) },
         };
-        foreach (var turn in ask.History.TakeLast(12))
-            messages.Add(new Dictionary<string, object> { ["role"] = turn.Role == "assistant" ? "assistant" : "user", ["content"] = turn.Text });
-        messages.Add(CerebrasUser(ask));
+        var recent = RecentTurns(ask);
+        var pictured = PictureTurn(ask, recent, out var carried);
+        foreach (var turn in recent)
+            messages.Add(CerebrasTurn(turn, ReferenceEquals(turn, pictured)));
+        messages.Add(CerebrasUser(ask, carried));
         if (ask.PriorTools.Count > 0)
         {
             messages.Add(new Dictionary<string, object?>
@@ -578,22 +678,30 @@ public sealed class BrainClient
         return ParseChatCompletion(body);
     }
 
-    private static Dictionary<string, object> CerebrasUser(AskInput ask)
+    private static Dictionary<string, object> CerebrasTurn(HistoryTurn turn, bool picture)
     {
-        var text = ask.UserText;
-        if (!string.IsNullOrWhiteSpace(ask.ScreenText)) text += "\n\nScreen details:\n" + ask.ScreenText;
-        var content = new List<object> { new Dictionary<string, object> { ["type"] = "text", ["text"] = text } };
-        if (ask.Jpeg is { Length: > 0 })
+        var text = LookMemory.VisibleText(turn, picture);
+        var role = turn.Role == "assistant" ? "assistant" : "user";
+        if (!picture || turn.Jpeg is not { Length: > 0 })
+            return new Dictionary<string, object> { ["role"] = role, ["content"] = text };
+        return new Dictionary<string, object>
         {
-            content.Add(new Dictionary<string, object>
+            ["role"] = role,
+            ["content"] = new List<object>
             {
-                ["type"] = "image_url",
-                ["image_url"] = new Dictionary<string, object>
-                {
-                    ["url"] = "data:image/jpeg;base64," + Convert.ToBase64String(ask.Jpeg),
-                },
-            });
-        }
+                new Dictionary<string, object> { ["type"] = "text", ["text"] = text },
+                ImagePart("image_url", "image_url", turn.Jpeg, nested: true),
+            },
+        };
+    }
+
+    private static Dictionary<string, object> CerebrasUser(AskInput ask, HistoryTurn? carried)
+    {
+        CurrentLook(ask, carried, out var text, out var screen, out var jpeg);
+        if (!string.IsNullOrWhiteSpace(screen)) text += "\n\nScreen details:\n" + screen;
+        var content = new List<object> { new Dictionary<string, object> { ["type"] = "text", ["text"] = text } };
+        if (jpeg is { Length: > 0 } image)
+            content.Add(ImagePart("image_url", "image_url", image, nested: true));
         return new Dictionary<string, object> { ["role"] = "user", ["content"] = content };
     }
 
@@ -624,12 +732,38 @@ public sealed class BrainClient
         return new ModelReply { Text = text.Trim(), ToolCalls = calls };
     }
 
-    private static Dictionary<string, object> AnthropicUser(AskInput ask)
+    private static Dictionary<string, object> AnthropicTurn(HistoryTurn turn, bool picture)
     {
-        var text = ask.UserText;
-        if (!string.IsNullOrWhiteSpace(ask.ScreenText)) text += "\n\nScreen details:\n" + ask.ScreenText;
+        var role = turn.Role == "assistant" ? "assistant" : "user";
+        var text = LookMemory.VisibleText(turn, picture);
+        if (!picture || turn.Jpeg is not { Length: > 0 })
+            return new Dictionary<string, object> { ["role"] = role, ["content"] = text };
+        return new Dictionary<string, object>
+        {
+            ["role"] = role,
+            ["content"] = new List<object>
+            {
+                new Dictionary<string, object> { ["type"] = "text", ["text"] = text },
+                new Dictionary<string, object>
+                {
+                    ["type"] = "image",
+                    ["source"] = new Dictionary<string, object>
+                    {
+                        ["type"] = "base64",
+                        ["media_type"] = "image/jpeg",
+                        ["data"] = Convert.ToBase64String(turn.Jpeg),
+                    },
+                },
+            },
+        };
+    }
+
+    private static Dictionary<string, object> AnthropicUser(AskInput ask, HistoryTurn? carried)
+    {
+        CurrentLook(ask, carried, out var text, out var screen, out var jpeg);
+        if (!string.IsNullOrWhiteSpace(screen)) text += "\n\nScreen details:\n" + screen;
         var content = new List<object> { new Dictionary<string, object> { ["type"] = "text", ["text"] = text } };
-        if (ask.Jpeg is { Length: > 0 })
+        if (jpeg is { Length: > 0 } image)
         {
             content.Add(new Dictionary<string, object>
             {
@@ -638,7 +772,7 @@ public sealed class BrainClient
                 {
                     ["type"] = "base64",
                     ["media_type"] = "image/jpeg",
-                    ["data"] = Convert.ToBase64String(ask.Jpeg),
+                    ["data"] = Convert.ToBase64String(image),
                 },
             });
         }

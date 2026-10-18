@@ -11,6 +11,7 @@ public sealed class ToolRun
     public required string Text { get; init; }
     public string? ImageBase64 { get; init; }
     public byte[]? Jpeg { get; init; }
+    public string? AppName { get; init; }
     public bool GoToSleep { get; init; }
 }
 
@@ -73,6 +74,7 @@ public sealed class CharacterSession
     public void Stop()
     {
         StoppedUntil = DateTimeOffset.UtcNow.AddSeconds(6);
+        DropLooks();
         PointChanged?.Invoke(null);
         CaptionChanged?.Invoke("Stopped");
     }
@@ -86,6 +88,7 @@ public sealed class CharacterSession
                 return Packet.Of("session", SessionJson(), packet.CallId);
             case "asleep":
                 Awake = false;
+                DropLooks();
                 PointChanged?.Invoke(null);
                 CaptionChanged?.Invoke(null);
                 return Packet.Of("session", SessionJson(), packet.CallId);
@@ -158,18 +161,25 @@ public sealed class CharacterSession
         var prior = new List<CompletedTool>();
         byte[]? jpeg = null;
         string? screen = null;
+        string? seenApp = null;
         string finalText = "";
+        var slept = false;
+        List<HistoryTurn> history;
+        lock (_gate)
+        {
+            var now = DateTimeOffset.UtcNow;
+            for (var i = 0; i < _history.Count; i++)
+                _history[i] = LookMemory.Expire(_history[i], now);
+            history = _history.ToList();
+        }
         try
         {
-            var first = await LookAsync(null, cancellationToken);
-            jpeg = first.Jpeg;
-            screen = first.Text;
             for (var round = 0; round < 6; round++)
             {
                 var reply = await _brains.CompleteAsync(settings, new AskInput
                 {
                     UserText = userText,
-                    History = _history.ToList(),
+                    History = history,
                     PriorTools = prior,
                     Jpeg = jpeg,
                     ScreenText = screen,
@@ -190,12 +200,14 @@ public sealed class CharacterSession
                     {
                         jpeg = run.Jpeg;
                         screen = run.Text;
+                        if (!string.IsNullOrWhiteSpace(run.AppName)) seenApp = run.AppName;
                     }
                     sleep |= run.GoToSleep;
                 }
                 if (sleep)
                 {
                     Awake = false;
+                    slept = true;
                     await push(Packet.Of("sleep"));
                     break;
                 }
@@ -211,11 +223,35 @@ public sealed class CharacterSession
             finalText = "The model returned no words.";
             await ShowAsync(push, finalText, done: true);
         }
+        var drop = slept || DateTimeOffset.UtcNow < StoppedUntil;
         lock (_gate)
         {
-            _history.Add(new HistoryTurn("user", userText));
+            if (jpeg != null)
+            {
+                for (var i = 0; i < _history.Count; i++)
+                    _history[i] = LookMemory.Release(_history[i], note: false);
+                _history.Add(new HistoryTurn("user", userText, jpeg, screen, DateTimeOffset.UtcNow, seenApp));
+            }
+            else
+            {
+                _history.Add(new HistoryTurn("user", userText));
+            }
             _history.Add(new HistoryTurn("assistant", finalText));
+            if (drop)
+            {
+                for (var i = 0; i < _history.Count; i++)
+                    _history[i] = LookMemory.Release(_history[i], note: true);
+            }
             if (_history.Count > 16) _history.RemoveRange(0, _history.Count - 16);
+        }
+    }
+
+    private void DropLooks()
+    {
+        lock (_gate)
+        {
+            for (var i = 0; i < _history.Count; i++)
+                _history[i] = LookMemory.Release(_history[i], note: true);
         }
     }
 
@@ -301,7 +337,7 @@ public sealed class CharacterSession
         var text = Grid.Describe(shot, _desk.Mouse);
         if (prefix != null) text = prefix + "\nHere's the screen now (ids have changed):\n" + text;
         var image = shot.Jpeg.Length == 0 ? null : Convert.ToBase64String(shot.Jpeg);
-        return new ToolRun { Text = text, ImageBase64 = image, Jpeg = shot.Jpeg };
+        return new ToolRun { Text = text, ImageBase64 = image, Jpeg = shot.Jpeg, AppName = shot.AppName };
     }
 
     private bool TrySpot(string arguments, string idKey, string xKey, string yKey, out PointD point, out string label)

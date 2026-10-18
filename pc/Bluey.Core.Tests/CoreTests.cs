@@ -71,6 +71,35 @@ public class CoreTests
     }
 
     [Fact]
+    public void Stored_look_stays_for_90_seconds_then_becomes_a_note()
+    {
+        var now = new DateTimeOffset(2026, 10, 18, 12, 0, 0, TimeSpan.Zero);
+        var fresh = new HistoryTurn("user", "play metal", new byte[] { 1 }, "Frontmost app: Spotify", now.AddSeconds(-90), "Spotify");
+        Assert.True(LookMemory.SendPixels(fresh, false, now));
+        var stale = fresh with { SeenAt = now.AddSeconds(-91) };
+        Assert.False(LookMemory.SendPixels(stale, false, now));
+        var expired = LookMemory.Expire(stale, now);
+        Assert.Null(expired.Jpeg);
+        Assert.Null(expired.ScreenText);
+        Assert.Contains("Last look: Spotify.", expired.Text);
+        Assert.Contains("play metal", expired.Text);
+    }
+
+    [Fact]
+    public void A_new_shot_is_the_only_picture_sent()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var older = new HistoryTurn("user", "open it", new byte[] { 1 }, "old", now.AddSeconds(-5), "Chrome");
+        var newer = new HistoryTurn("user", "play metal", new byte[] { 2 }, "new", now, "Spotify");
+        var history = new List<HistoryTurn> { older, new HistoryTurn("assistant", "Opened."), newer };
+        Assert.Same(newer, LookMemory.LatestFresh(history, false, now));
+        Assert.Null(LookMemory.LatestFresh(history, true, now));
+        var released = LookMemory.Release(older, note: false);
+        Assert.Null(released.Jpeg);
+        Assert.Equal("open it", released.Text);
+    }
+
+    [Fact]
     public void Guard_refuses_lock_and_allows_a_normal_shortcut()
     {
         Assert.Contains("lock", ActionGuard.Refusal("press_keys", true, false, "{\"keys\":\"Win+L\"}")!, StringComparison.OrdinalIgnoreCase);
