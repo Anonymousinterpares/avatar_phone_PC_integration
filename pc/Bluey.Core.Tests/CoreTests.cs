@@ -43,6 +43,34 @@ public class CoreTests
     }
 
     [Fact]
+    public void Grid_uses_the_monitor_origin()
+    {
+        var size = new SizeD(1920, 1080);
+        var origin = new PointD(1920, 0);
+        var grid = Grid.ToGrid(new PointD(2880, 540), size, origin);
+        Assert.Equal(500, grid.X);
+        Assert.Equal(500, grid.Y);
+        var pixel = Grid.ToPixel(500, 500, size, origin);
+        Assert.Equal(2880, pixel.X);
+        Assert.Equal(540, pixel.Y);
+    }
+
+    [Fact]
+    public void Describe_keeps_a_name_on_a_second_monitor_and_notices_the_mouse_left()
+    {
+        var shot = new ScreenCapture(
+            Array.Empty<byte>(),
+            new[] { new ScreenTarget("L1", "line", "Metal", new RectD(2000, 100, 80, 20)) },
+            "Spotify",
+            new SizeD(1920, 1080),
+            new PointD(1920, 0));
+        var text = Grid.Describe(shot, new PointD(100, 100));
+        Assert.Contains("Metal", text);
+        Assert.Contains("@62,101", text);
+        Assert.Contains("outside this picture", text);
+    }
+
+    [Fact]
     public void Guard_refuses_lock_and_allows_a_normal_shortcut()
     {
         Assert.Contains("lock", ActionGuard.Refusal("press_keys", true, false, "{\"keys\":\"Win+L\"}")!, StringComparison.OrdinalIgnoreCase);

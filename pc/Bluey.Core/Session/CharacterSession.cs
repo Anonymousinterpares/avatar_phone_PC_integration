@@ -161,6 +161,9 @@ public sealed class CharacterSession
         string finalText = "";
         try
         {
+            var first = await LookAsync(null, cancellationToken);
+            jpeg = first.Jpeg;
+            screen = first.Text;
             for (var round = 0; round < 6; round++)
             {
                 var reply = await _brains.CompleteAsync(settings, new AskInput
@@ -248,7 +251,7 @@ public sealed class CharacterSession
                 var y = ActionGuard.ReadNumber(arguments, "y");
                 if (x == null || y == null) return new ToolRun { Text = "Give x and y." };
                 var size = _shot?.Size ?? _desk.ScreenSize;
-                PointChanged?.Invoke(Grid.ToPixel(x.Value, y.Value, size));
+                PointChanged?.Invoke(Grid.ToPixel(x.Value, y.Value, size, _shot?.Origin ?? default));
                 return new ToolRun { Text = "Pointing there." };
             }
             case "stop_pointing":
@@ -319,7 +322,7 @@ public sealed class CharacterSession
         var x = ActionGuard.ReadNumber(arguments, xKey);
         var y = ActionGuard.ReadNumber(arguments, yKey);
         if (x == null || y == null) return false;
-        point = Grid.ToPixel(x.Value, y.Value, _shot?.Size ?? _desk.ScreenSize);
+        point = Grid.ToPixel(x.Value, y.Value, _shot?.Size ?? _desk.ScreenSize, _shot?.Origin ?? default);
         return true;
     }
 

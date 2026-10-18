@@ -15,7 +15,7 @@ public readonly record struct RectD(double X, double Y, double Width, double Hei
 
 public sealed record ScreenTarget(string Id, string Kind, string Text, RectD Rect);
 
-public sealed record ScreenCapture(byte[] Jpeg, IReadOnlyList<ScreenTarget> Targets, string? AppName, SizeD Size);
+public sealed record ScreenCapture(byte[] Jpeg, IReadOnlyList<ScreenTarget> Targets, string? AppName, SizeD Size, PointD Origin = default);
 
 public interface IDesk
 {
@@ -36,15 +36,15 @@ public interface IDesk
 
 public static class Grid
 {
-    public static PointD ToPixel(double x, double y, SizeD size) => new(
-        Math.Clamp(x, 0, 1000) / 1000 * size.Width,
-        Math.Clamp(y, 0, 1000) / 1000 * size.Height);
+    public static PointD ToPixel(double x, double y, SizeD size, PointD origin = default) => new(
+        origin.X + Math.Clamp(x, 0, 1000) / 1000 * size.Width,
+        origin.Y + Math.Clamp(y, 0, 1000) / 1000 * size.Height);
 
-    public static (int X, int Y) ToGrid(PointD point, SizeD size)
+    public static (int X, int Y) ToGrid(PointD point, SizeD size, PointD origin = default)
     {
         if (size.Width <= 0 || size.Height <= 0) return (0, 0);
-        var x = (int)(Math.Clamp(point.X / size.Width, 0, 1) * 1000);
-        var y = (int)(Math.Clamp(point.Y / size.Height, 0, 1) * 1000);
+        var x = (int)(Math.Clamp((point.X - origin.X) / size.Width, 0, 1) * 1000);
+        var y = (int)(Math.Clamp((point.Y - origin.Y) / size.Height, 0, 1) * 1000);
         return (x, y);
     }
 
@@ -52,11 +52,14 @@ public static class Grid
     {
         string At(RectD r)
         {
-            var (x, y) = ToGrid(new PointD(r.MidX, r.MidY), shot.Size);
+            var (x, y) = ToGrid(new PointD(r.MidX, r.MidY), shot.Size, shot.Origin);
             return $"@{x},{y}";
         }
 
-        var lines = new List<string>();
+        var lines = new List<string>
+        {
+            "Picture: the front window. Read names from the picture. This text can miss custom-drawn lists such as Spotify playlists.",
+        };
         if (!string.IsNullOrWhiteSpace(shot.AppName)) lines.Add($"Frontmost app: {shot.AppName}");
         var controls = shot.Targets.Where(t => t.Id.StartsWith('C')).ToList();
         if (controls.Count > 0)
@@ -74,11 +77,20 @@ public static class Grid
             var wordText = words.Count > 1 ? " | " + string.Join(" ", words.Select(w => $"{w.Id}={w.Text}")) : "";
             lines.Add($"{line.Id} {At(line.Rect)} \"{line.Text}\"{wordText}");
         }
-        var (mx, my) = ToGrid(mouse, shot.Size);
-        var under = Nearest(shot, mouse);
-        var where = $"The user's mouse pointer is at @{mx},{my}";
-        if (under != null) where += $", on {under.Id} \"{under.Text}\"";
-        lines.Add(where + ". When they say \"this\", \"that\" or \"here\", they mean what's at their mouse pointer.");
+        var onPicture = mouse.X >= shot.Origin.X && mouse.X < shot.Origin.X + shot.Size.Width
+            && mouse.Y >= shot.Origin.Y && mouse.Y < shot.Origin.Y + shot.Size.Height;
+        if (!onPicture)
+        {
+            lines.Add("The user's mouse pointer is outside this picture.");
+        }
+        else
+        {
+            var (mx, my) = ToGrid(mouse, shot.Size, shot.Origin);
+            var under = Nearest(shot, mouse);
+            var where = $"The user's mouse pointer is at @{mx},{my}";
+            if (under != null) where += $", on {under.Id} \"{under.Text}\"";
+            lines.Add(where + ". When they say \"this\", \"that\" or \"here\", they mean what's at their mouse pointer.");
+        }
         return string.Join('\n', lines);
     }
 

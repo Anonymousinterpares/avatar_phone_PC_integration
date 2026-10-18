@@ -48,9 +48,7 @@ public sealed class WindowsDesk : IDesk
         try
         {
             await Task.Delay(30, cancellationToken);
-            var cursor = System.Windows.Forms.Cursor.Position;
-            var screen = Screen.FromPoint(cursor);
-            var bounds = screen.Bounds;
+            var bounds = CaptureBounds();
             using var bitmap = new Bitmap(bounds.Width, bounds.Height, PixelFormat.Format32bppArgb);
             using (var graphics = Graphics.FromImage(bitmap))
                 graphics.CopyFromScreen(bounds.X, bounds.Y, 0, 0, bounds.Size, CopyPixelOperation.SourceCopy);
@@ -61,7 +59,7 @@ public sealed class WindowsDesk : IDesk
             catch (Exception) { /* UIA is best-effort. */ }
             try { targets.AddRange(await ReadTextAsync(bitmap, bounds)); }
             catch (Exception) { /* OCR language pack may be missing. */ }
-            return new ScreenCapture(Jpeg(bitmap), targets, app, new SizeD(bounds.Width, bounds.Height));
+            return new ScreenCapture(Jpeg(bitmap), targets, app, new SizeD(bounds.Width, bounds.Height), new PointD(bounds.X, bounds.Y));
         }
         finally
         {
@@ -140,10 +138,10 @@ public sealed class WindowsDesk : IDesk
         Warp(saved);
     }
 
-    public Task<string> OpenAppAsync(string name, CancellationToken cancellationToken)
+    public async Task<string> OpenAppAsync(string name, CancellationToken cancellationToken)
     {
         var wanted = name.Trim();
-        if (wanted.Length == 0) return Task.FromResult("Which app?");
+        if (wanted.Length == 0) return "Which app?";
         var known = KnownApp(wanted);
         string? match = null;
         if (known == null)
@@ -152,16 +150,20 @@ public sealed class WindowsDesk : IDesk
             catch (Exception) { match = null; }
         }
         var target = known ?? match ?? wanted;
+        var label = match == null ? wanted : Path.GetFileNameWithoutExtension(match);
+        var before = FrontApp();
         try
         {
             Process.Start(new ProcessStartInfo(target) { UseShellExecute = true });
-            var label = match == null ? wanted : Path.GetFileNameWithoutExtension(match);
-            return Task.FromResult("Opened " + label + ".");
         }
         catch (Exception ex)
         {
-            return Task.FromResult("I couldn't open " + wanted + ": " + ex.Message);
+            return "I couldn't open " + wanted + ": " + ex.Message;
         }
+        var shown = await WaitUntilFrontAsync(label, before, cancellationToken);
+        return shown
+            ? "Opened " + label + ". Its window is in front."
+            : "Opened " + label + ", but its window is not in front yet. Look again before clicking.";
     }
 
     public string OpenUrl(string url)
@@ -196,6 +198,66 @@ public sealed class WindowsDesk : IDesk
         catch (Exception) { return null; }
     }
 
+    private static string FrontTitle()
+    {
+        var hwnd = GetForegroundWindow();
+        if (hwnd == 0) return "";
+        var buffer = new System.Text.StringBuilder(512);
+        _ = GetWindowText(hwnd, buffer, buffer.Capacity);
+        return buffer.ToString();
+    }
+
+    private static async Task<bool> WaitUntilFrontAsync(string label, string? previous, CancellationToken cancellationToken)
+    {
+        var needle = label.Trim().ToLowerInvariant();
+        if (needle.EndsWith(".exe", StringComparison.Ordinal)) needle = needle[..^4];
+        var deadline = DateTime.UtcNow.AddSeconds(6);
+        while (DateTime.UtcNow < deadline)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var process = FrontApp() ?? "";
+            var title = FrontTitle();
+            var processMatch = needle.Length > 0 && process.Contains(needle, StringComparison.OrdinalIgnoreCase);
+            var changed = previous != null && process.Length > 0 && !process.Equals(previous, StringComparison.OrdinalIgnoreCase) && title.Length > 0 && WindowIsBig();
+            if ((processMatch && WindowIsBig()) || changed)
+            {
+                await Task.Delay(700, cancellationToken);
+                return true;
+            }
+            await Task.Delay(150, cancellationToken);
+        }
+        return false;
+    }
+
+    private static bool WindowIsBig()
+    {
+        var hwnd = GetForegroundWindow();
+        if (hwnd == 0 || !GetWindowRect(hwnd, out var rect)) return false;
+        return rect.Right - rect.Left > 320 && rect.Bottom - rect.Top > 200;
+    }
+
+    private static Rectangle CaptureBounds()
+    {
+        var hwnd = GetForegroundWindow();
+        if (hwnd != 0 && !IsUs(hwnd) && GetWindowRect(hwnd, out var rect))
+        {
+            var window = Rectangle.FromLTRB(rect.Left, rect.Top, rect.Right, rect.Bottom);
+            if (window.Width > 200 && window.Height > 200)
+            {
+                var center = new DrawingPoint(window.Left + window.Width / 2, window.Top + window.Height / 2);
+                window.Intersect(Screen.FromPoint(center).Bounds);
+                if (window.Width > 200 && window.Height > 200) return window;
+            }
+        }
+        return Screen.FromPoint(System.Windows.Forms.Cursor.Position).Bounds;
+    }
+
+    private static bool IsUs(IntPtr hwnd)
+    {
+        _ = GetWindowThreadProcessId(hwnd, out var pid);
+        return pid == (uint)Environment.ProcessId;
+    }
+
     private static List<ScreenTarget> ReadControls(Rectangle screen)
     {
         var hwnd = GetForegroundWindow();
@@ -205,9 +267,9 @@ public sealed class WindowsDesk : IDesk
         var found = new List<(string Kind, string Label, RectD Rect)>();
         var queue = new Queue<AutomationElement>();
         queue.Enqueue(root);
-        var deadline = DateTime.UtcNow.AddMilliseconds(450);
+        var deadline = DateTime.UtcNow.AddMilliseconds(900);
         var seen = 0;
-        while (queue.Count > 0 && seen < 2500 && DateTime.UtcNow < deadline && found.Count < 140)
+        while (queue.Count > 0 && seen < 4000 && DateTime.UtcNow < deadline && found.Count < 400)
         {
             var element = queue.Dequeue();
             seen++;
@@ -226,7 +288,7 @@ public sealed class WindowsDesk : IDesk
                 var walker = TreeWalker.ControlViewWalker;
                 var child = walker.GetFirstChild(element);
                 var added = 0;
-                while (child != null && added < 80)
+                while (child != null && added < 200)
                 {
                     queue.Enqueue(child);
                     child = walker.GetNextSibling(child);
@@ -254,6 +316,8 @@ public sealed class WindowsDesk : IDesk
         if (type == ControlType.TabItem) return "tab";
         if (type == ControlType.Slider) return "slider";
         if (type == ControlType.SplitButton) return "button";
+        if (type == ControlType.ListItem || type == ControlType.TreeItem || type == ControlType.DataItem) return "list item";
+        if (type == ControlType.Text) return "text";
         return null;
     }
 
@@ -261,8 +325,20 @@ public sealed class WindowsDesk : IDesk
     {
         var engine = Windows.Media.Ocr.OcrEngine.TryCreateFromUserProfileLanguages();
         if (engine == null) return new List<ScreenTarget>();
+        var limit = (int)Windows.Media.Ocr.OcrEngine.MaxImageDimension;
+        Bitmap? shrunk = null;
+        var source = bitmap;
+        var scale = 1.0;
+        if (limit >= 40 && (bitmap.Width > limit || bitmap.Height > limit))
+        {
+            scale = Math.Min((limit - 1) / (double)bitmap.Width, (limit - 1) / (double)bitmap.Height);
+            shrunk = new Bitmap(bitmap, Math.Max(1, (int)(bitmap.Width * scale)), Math.Max(1, (int)(bitmap.Height * scale)));
+            source = shrunk;
+        }
+        try
+        {
         using var memory = new MemoryStream();
-        bitmap.Save(memory, ImageFormat.Png);
+        source.Save(memory, ImageFormat.Png);
         var stream = new Windows.Storage.Streams.InMemoryRandomAccessStream();
         var writer = new Windows.Storage.Streams.DataWriter(stream);
         writer.WriteBytes(memory.ToArray());
@@ -277,25 +353,34 @@ public sealed class WindowsDesk : IDesk
         var wordIndex = 1;
         foreach (var line in result.Lines)
         {
-            if (lineIndex > 400) break;
+            if (lineIndex > 500) break;
             var lineRect = line.Words.Count == 0
                 ? new RectD(bounds.X, bounds.Y, 1, 1)
-                : Union(line.Words.Select(word => word.BoundingRect), bounds);
+                : Union(line.Words.Select(word => word.BoundingRect), bounds, scale);
             targets.Add(new ScreenTarget("L" + lineIndex, "line", line.Text, lineRect));
             lineIndex++;
             if (line.Words.Count < 2) continue;
             foreach (var word in line.Words)
             {
-                if (wordIndex > 600) break;
+                if (wordIndex > 900) break;
                 var rect = word.BoundingRect;
-                targets.Add(new ScreenTarget("W" + wordIndex, "word", word.Text, new RectD(bounds.X + rect.X, bounds.Y + rect.Y, rect.Width, rect.Height)));
+                targets.Add(new ScreenTarget("W" + wordIndex, "word", word.Text, new RectD(
+                    bounds.X + rect.X / scale,
+                    bounds.Y + rect.Y / scale,
+                    Math.Max(1, rect.Width / scale),
+                    Math.Max(1, rect.Height / scale))));
                 wordIndex++;
             }
         }
         return targets;
+        }
+        finally
+        {
+            shrunk?.Dispose();
+        }
     }
 
-    private static RectD Union(IEnumerable<Windows.Foundation.Rect> rects, Rectangle bounds)
+    private static RectD Union(IEnumerable<Windows.Foundation.Rect> rects, Rectangle bounds, double scale)
     {
         double left = double.MaxValue, top = double.MaxValue, right = 0, bottom = 0;
         foreach (var rect in rects)
@@ -305,19 +390,21 @@ public sealed class WindowsDesk : IDesk
             right = Math.Max(right, rect.X + rect.Width);
             bottom = Math.Max(bottom, rect.Y + rect.Height);
         }
-        return new RectD(bounds.X + left, bounds.Y + top, Math.Max(1, right - left), Math.Max(1, bottom - top));
+        var factor = scale <= 0 ? 1 : scale;
+        return new RectD(bounds.X + left / factor, bounds.Y + top / factor, Math.Max(1, (right - left) / factor), Math.Max(1, (bottom - top) / factor));
     }
 
     private static byte[] Jpeg(Bitmap source)
     {
-        var scale = Math.Min(1, 1100.0 / Math.Max(source.Width, source.Height));
+        const double maxPixels = 1536d * 1536d;
+        var scale = Math.Min(1, Math.Sqrt(maxPixels / (source.Width * (double)source.Height)));
         var width = Math.Max(1, (int)(source.Width * scale));
         var height = Math.Max(1, (int)(source.Height * scale));
         using var scaled = new Bitmap(source, width, height);
         using var memory = new MemoryStream();
         var codec = ImageCodecInfo.GetImageEncoders().First(item => item.FormatID == ImageFormat.Jpeg.Guid);
         using var parameters = new EncoderParameters(1);
-        parameters.Param[0] = new EncoderParameter(Encoder.Quality, 72L);
+        parameters.Param[0] = new EncoderParameter(Encoder.Quality, 85L);
         scaled.Save(memory, codec, parameters);
         return memory.ToArray();
     }
@@ -562,4 +649,15 @@ public sealed class WindowsDesk : IDesk
     [DllImport("user32.dll")] private static extern int GetSystemMetrics(int index);
     [DllImport("user32.dll")] private static extern IntPtr GetForegroundWindow();
     [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint processId);
+    [DllImport("user32.dll")] private static extern bool GetWindowRect(IntPtr hwnd, out RECT rect);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern int GetWindowText(IntPtr hwnd, System.Text.StringBuilder text, int count);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct RECT
+    {
+        public int Left;
+        public int Top;
+        public int Right;
+        public int Bottom;
+    }
 }
