@@ -7,6 +7,7 @@ using Bluey.Brains;
 using Bluey.Desk;
 using Bluey.Protocol;
 using Bluey.Session;
+using Bluey.Speech;
 
 namespace Bluey.Host;
 
@@ -16,6 +17,7 @@ public partial class App : System.Windows.Application
     private TrayApp? _tray;
     private CursorOverlay? _overlay;
     private CharacterSession? _session;
+    private SupertonicSpeaker? _speaker;
 
     protected override void OnStartup(StartupEventArgs e)
     {
@@ -26,12 +28,14 @@ public partial class App : System.Windows.Application
         };
         var store = new SettingsStore();
         var settings = store.Load();
+        var speech = SpeechConfigStore.Open();
         var http = new HttpClient { Timeout = TimeSpan.FromMinutes(3) };
         var brains = new BrainClient(http, store);
         _overlay = new CursorOverlay();
         _overlay.Show();
         var desk = new WindowsDesk(() => store.Load().ComputerControl, visible => _overlay.SetVisible(visible));
-        _session = new CharacterSession(brains, desk);
+        _speaker = new SupertonicSpeaker(speech);
+        _session = new CharacterSession(brains, desk, _speaker);
         _session.CaptionChanged += text => _overlay.SetCaption(text);
         _session.PointChanged += point => _overlay.PointAt(point);
         _phones = new PhoneLink((packet, push, token) => _session.HandleAsync(packet, push, token));
@@ -39,7 +43,8 @@ public partial class App : System.Windows.Application
         var hints = new UsageHintsWindow();
         hints.Show();
         hints.SetEnabled(settings.UsageHints);
-        _tray = new TrayApp(settings, store, brains, _session, _phones, _overlay, hints);
+        _tray = new TrayApp(settings, store, brains, _session, _phones, _overlay, hints, speech, _speaker);
+        if (speech.Current.TextToSpeech) _speaker.Warmup();
         var gaze = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(200) };
         gaze.Tick += (_, _) => PumpFace(store);
         gaze.Start();
@@ -51,6 +56,7 @@ public partial class App : System.Windows.Application
     protected override void OnExit(ExitEventArgs e)
     {
         _phones?.Dispose();
+        _speaker?.Dispose();
         _tray?.Dispose();
         base.OnExit(e);
     }

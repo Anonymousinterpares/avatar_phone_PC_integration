@@ -3,6 +3,7 @@ using Bluey.Auth;
 using Bluey.Brains;
 using Bluey.Desk;
 using Bluey.Protocol;
+using Bluey.Speech;
 
 namespace Bluey.Session;
 
@@ -19,14 +20,16 @@ public sealed class CharacterSession
 {
     private readonly BrainClient _brains;
     private readonly IDesk _desk;
+    private readonly IReplySpeaker? _speaker;
     private readonly List<HistoryTurn> _history = new();
     private ScreenCapture? _shot;
     private readonly object _gate = new();
 
-    public CharacterSession(BrainClient brains, IDesk desk)
+    public CharacterSession(BrainClient brains, IDesk desk, IReplySpeaker? speaker = null)
     {
         _brains = brains;
         _desk = desk;
+        _speaker = speaker;
     }
 
     public bool Awake { get; private set; }
@@ -34,7 +37,7 @@ public sealed class CharacterSession
     public event Action<string?>? CaptionChanged;
     public event Action<PointD?>? PointChanged;
 
-    public void ShowCaption(string? text) => CaptionChanged?.Invoke(text);
+    public void ShowCaption(string? text) => Present(text, speak: true);
 
     public string DescribeMode()
     {
@@ -78,6 +81,7 @@ public sealed class CharacterSession
     {
         StoppedUntil = DateTimeOffset.UtcNow.AddSeconds(6);
         DropLooks();
+        _speaker?.Stop();
         PointChanged?.Invoke(null);
         CaptionChanged?.Invoke("Stopped");
     }
@@ -93,6 +97,7 @@ public sealed class CharacterSession
                 Awake = false;
                 DropLooks();
                 PointChanged?.Invoke(null);
+                _speaker?.Stop();
                 CaptionChanged?.Invoke(null);
                 return Packet.Of("session", SessionJson(), packet.CallId);
             case "realtimeToken":
@@ -140,7 +145,7 @@ public sealed class CharacterSession
                     // The whole text is the prompt.
                 }
                 var handoff = await AgentHandoff.RunAsync(target, prompt, cancellationToken);
-                CaptionChanged?.Invoke(handoff);
+                Present(handoff, speak: true);
                 return new Packet { Command = "handoff", CallId = packet.CallId, Text = handoff };
             default:
                 return null;
@@ -187,10 +192,11 @@ public sealed class CharacterSession
                     Jpeg = jpeg,
                     ScreenText = screen,
                     ComputerControl = settings.ComputerControl,
+                    SpeakAloud = _speaker?.Enabled == true,
                 }, cancellationToken);
                 if (!string.IsNullOrWhiteSpace(reply.Text))
                 {
-                    finalText = reply.Text;
+                    finalText = SpokenSpan.Strip(reply.Text);
                     await ShowAsync(push, reply.Text, done: reply.ToolCalls.Count == 0);
                 }
                 if (reply.ToolCalls.Count == 0) break;
@@ -260,8 +266,25 @@ public sealed class CharacterSession
 
     private async Task ShowAsync(Func<Packet, Task> push, string text, bool done)
     {
-        CaptionChanged?.Invoke(text);
-        await push(new Packet { Command = done ? "captionDone" : "caption", Text = text });
+        var display = Present(text, speak: done);
+        await push(new Packet { Command = done ? "captionDone" : "caption", Text = display });
+    }
+
+    private string Present(string? text, bool speak)
+    {
+        if (text == null)
+        {
+            CaptionChanged?.Invoke(null);
+            if (speak) _speaker?.Stop();
+            return "";
+        }
+        var display = SpokenSpan.Strip(text);
+        CaptionChanged?.Invoke(display);
+        if (!speak) return display;
+        var spoken = SpokenSpan.Extract(text);
+        if (string.IsNullOrWhiteSpace(spoken)) _speaker?.Stop();
+        else _speaker?.Speak(spoken);
+        return display;
     }
 
     public async Task<ToolRun> RunToolAsync(string name, string arguments, CancellationToken cancellationToken)
@@ -304,7 +327,7 @@ public sealed class CharacterSession
                 var question = ActionGuard.ReadString(arguments, "question");
                 if (string.IsNullOrWhiteSpace(question)) return new ToolRun { Text = "What should I research?" };
                 var answer = await _brains.ResearchAsync(settings, question, cancellationToken);
-                CaptionChanged?.Invoke(answer);
+                Present(answer, speak: true);
                 return new ToolRun { Text = answer };
             }
             case "click":

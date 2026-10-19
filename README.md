@@ -39,6 +39,19 @@ For Qwen 3.8 27B, Bluey pins that provider and does not fall back to another hos
 
 **Let him use the computer** stays off until you check it in the tray. Ctrl+Alt+S stops him. Ctrl+Alt+Space wakes or sleeps him.
 
+### Spoken replies
+
+Optional. Bluey can read his answers aloud on this PC with Supertonic 3. The voice stays on the computer. No cloud speech call.
+
+1. Install Python 3 if it is not already there.
+2. Run `py -3 -m pip install supertonic`.
+3. Right-click the tray icon. Check **Speak replies**. Under **Voice sex**, choose **Male** or **Female**.
+4. The choice is written to `bluey.config.json` in this folder and loaded again every time Bluey starts.
+
+Male uses Supertonic voice M1. Female uses F1. The first spoken line downloads the model, about 400 MB, into your user cache. `lang` in that same file can be `na`, `en`, or `pl`. `na` lets the model handle mixed language.
+
+While speech is on, Bluey is told to wrap the line you should hear in `[[spoken]]` and `[[/spoken]]`. Only the words inside those marks are read aloud. The bubble still shows the whole reply, without the marks.
+
 ## Android
 
 The phone app installs from an APK. There is no store listing.

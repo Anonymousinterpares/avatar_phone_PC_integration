@@ -10,6 +10,7 @@ using Bluey.Auth;
 using Bluey.Brains;
 using Bluey.Protocol;
 using Bluey.Session;
+using Bluey.Speech;
 
 namespace Bluey.Host;
 
@@ -22,11 +23,13 @@ public sealed class TrayApp : IDisposable
     private readonly PhoneLink _phones;
     private readonly CursorOverlay _overlay;
     private readonly UsageHintsWindow _hints;
+    private readonly SpeechConfigStore _speech;
+    private readonly SupertonicSpeaker _speaker;
     private readonly NotifyIcon _icon;
     private readonly Icon _iconImage;
     private readonly ToolStripMenuItem _modeItem;
 
-    public TrayApp(AppSettings settings, SettingsStore store, BrainClient brains, CharacterSession session, PhoneLink phones, CursorOverlay overlay, UsageHintsWindow hints)
+    public TrayApp(AppSettings settings, SettingsStore store, BrainClient brains, CharacterSession session, PhoneLink phones, CursorOverlay overlay, UsageHintsWindow hints, SpeechConfigStore speech, SupertonicSpeaker speaker)
     {
         _settings = settings;
         _store = store;
@@ -35,6 +38,8 @@ public sealed class TrayApp : IDisposable
         _phones = phones;
         _overlay = overlay;
         _hints = hints;
+        _speech = speech;
+        _speaker = speaker;
         _modeItem = new ToolStripMenuItem("Mode") { Enabled = false };
         _iconImage = BlueberryIcon();
         _icon = new NotifyIcon
@@ -42,6 +47,13 @@ public sealed class TrayApp : IDisposable
             Icon = _iconImage,
             Visible = true,
             Text = Trim("Bluey  " + session.DescribeMode()),
+        };
+        _speaker.Failed += message =>
+        {
+            var app = System.Windows.Application.Current;
+            if (app == null) return;
+            app.Dispatcher.BeginInvoke(new Action(() =>
+                _icon.ShowBalloonTip(5000, "Bluey speech", message, ToolTipIcon.Warning)));
         };
         _icon.ContextMenuStrip = BuildMenu();
         _icon.DoubleClick += (_, _) => ShowSettings(ask: false);
@@ -130,6 +142,23 @@ public sealed class TrayApp : IDisposable
             _hints.SetEnabled(hints.Checked);
         };
         menu.Items.Add(hints);
+        var speak = new ToolStripMenuItem("Speak replies") { Checked = _speech.Current.TextToSpeech, CheckOnClick = true };
+        speak.CheckedChanged += (_, _) =>
+        {
+            _speech.Current.TextToSpeech = speak.Checked;
+            _speech.Save();
+            if (speak.Checked) _speaker.Warmup();
+            else _speaker.Stop();
+        };
+        menu.Items.Add(speak);
+        var male = new ToolStripMenuItem("Male") { Checked = _speech.Current.Sex == "male" };
+        var female = new ToolStripMenuItem("Female") { Checked = _speech.Current.Sex == "female" };
+        male.Click += (_, _) => ChooseSex("male", male, female);
+        female.Click += (_, _) => ChooseSex("female", male, female);
+        var sex = new ToolStripMenuItem("Voice sex");
+        sex.DropDownItems.Add(male);
+        sex.DropDownItems.Add(female);
+        menu.Items.Add(sex);
         menu.Items.Add("Send him home", null, (_, _) => _overlay.PointAt(null));
         var hidden = new ToolStripMenuItem("Hide the blueberry") { CheckOnClick = true };
         hidden.CheckedChanged += (_, _) => _overlay.SetUserHidden(hidden.Checked);
@@ -147,6 +176,14 @@ public sealed class TrayApp : IDisposable
                 "Bluey", MessageBoxButtons.OK, MessageBoxIcon.Information));
         menu.Items.Add("Quit", null, (_, _) => System.Windows.Application.Current.Shutdown());
         return menu;
+    }
+
+    private void ChooseSex(string sex, ToolStripMenuItem male, ToolStripMenuItem female)
+    {
+        _speech.Current.Sex = SpeechConfig.NormalizeSex(sex);
+        _speech.Save();
+        male.Checked = _speech.Current.Sex == "male";
+        female.Checked = _speech.Current.Sex == "female";
     }
 
     private void Seat(string seat)

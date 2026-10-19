@@ -4,6 +4,7 @@ using Bluey.Brains;
 using Bluey.Desk;
 using Bluey.Protocol;
 using Bluey.Session;
+using Bluey.Speech;
 
 namespace Bluey.Core.Tests;
 
@@ -303,6 +304,66 @@ public class CoreTests
     }
 
     [Fact]
+    public void Speech_config_round_trips_and_normalizes_sex()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "bluey-speech-" + Guid.NewGuid().ToString("N"));
+        var nested = Path.Combine(root, "pc", "bin");
+        Directory.CreateDirectory(nested);
+        var path = Path.Combine(root, SpeechConfig.FileName);
+        new SpeechConfig { TextToSpeech = true, Sex = "FEMALE", Lang = "pl" }.Save(path);
+        var found = SpeechConfig.FindExisting(new[] { nested });
+        Assert.Equal(path, found);
+        var loaded = SpeechConfig.Load(path!);
+        Assert.True(loaded.TextToSpeech);
+        Assert.Equal("female", loaded.Sex);
+        Assert.Equal("pl", loaded.Lang);
+        File.WriteAllText(path, """{"textToSpeech":true,"sex":"nope","lang":"zz"}""");
+        loaded = SpeechConfig.Load(path);
+        Assert.Equal("male", loaded.Sex);
+        Assert.Equal("na", loaded.Lang);
+        Assert.Equal("Hello there.", SpeechText.Prepare("  Hello   there. \n"));
+        Assert.True(SpeechText.Prepare(new string('a', 800)).Length <= SpeechText.MaxChars);
+        Directory.Delete(root, true);
+    }
+
+    [Fact]
+    public void Spoken_marks_are_added_only_when_speech_is_on()
+    {
+        Assert.DoesNotContain("[[spoken]]", Personality.Instructions(false));
+        Assert.DoesNotContain("[[spoken]]", Personality.Instructions(true));
+        var on = Personality.Instructions(true, speakAloud: true);
+        Assert.Contains("[[spoken]]", on);
+        Assert.Contains("[[/spoken]]", on);
+        Assert.Equal("Heard.", SpokenSpan.Extract("Shown. [[spoken]]Heard.[[/spoken]] More."));
+        Assert.Null(SpokenSpan.Extract("Shown only."));
+        Assert.Null(SpokenSpan.Extract("[[spoken]]no close"));
+        Assert.Equal("Shown. Heard. More.", SpokenSpan.Strip("Shown. [[spoken]]Heard.[[/spoken]] More."));
+        Assert.Equal("One. Two.", SpokenSpan.Extract("[[spoken]]One.[[/spoken]] and [[SPOKEN]]Two.[[/spoken]]"));
+    }
+
+    [Fact]
+    public void Only_the_marked_span_is_spoken()
+    {
+        var speaker = new RecordingSpeaker { Enabled = true };
+        string? shown = null;
+        var session = new CharacterSession(
+            new BrainClient(new HttpClient(), new SettingsStore(Path.Combine(Path.GetTempPath(), "bluey-unused-" + Guid.NewGuid().ToString("N")))),
+            new FakeDesk(),
+            speaker);
+        session.CaptionChanged += text => shown = text;
+        session.ShowCaption("The list is long. [[spoken]]It's the metal one.[[/spoken]]");
+        Assert.Equal("The list is long. It's the metal one.", shown);
+        Assert.Equal(new[] { "It's the metal one." }, speaker.Spoken);
+        session.ShowCaption("Nothing to hear.");
+        Assert.Equal(new[] { "It's the metal one." }, speaker.Spoken);
+        Assert.Equal(1, speaker.Stops);
+        session.ShowCaption("  ");
+        Assert.Equal(2, speaker.Stops);
+        session.Stop();
+        Assert.Equal(3, speaker.Stops);
+    }
+
+    [Fact]
     public async Task Ask_runs_a_tool_then_answers()
     {
         var desk = new FakeDesk();
@@ -316,6 +377,15 @@ public class CoreTests
         var refused = await session.RunToolAsync("click", "{\"target_id\":\"W1\"}", CancellationToken.None);
         Assert.Contains("turned off", refused.Text, StringComparison.OrdinalIgnoreCase);
     }
+}
+
+public sealed class RecordingSpeaker : IReplySpeaker
+{
+    public bool Enabled { get; set; }
+    public List<string> Spoken { get; } = new();
+    public int Stops { get; private set; }
+    public void Speak(string text) => Spoken.Add(text);
+    public void Stop() => Stops++;
 }
 
 public sealed class FakeDesk : IDesk
