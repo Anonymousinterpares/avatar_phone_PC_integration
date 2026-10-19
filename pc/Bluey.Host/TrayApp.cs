@@ -170,7 +170,38 @@ public sealed class TrayApp : IDisposable
         menu.Items.Add("Type an ask…", null, (_, _) => ShowSettings(ask: true));
         menu.Items.Add("Hand the ask to Claude Code", null, async (_, _) => await HandoffAsync("claude"));
         menu.Items.Add("Hand the ask to Cursor", null, async (_, _) => await HandoffAsync("cursor"));
-        menu.Items.Add(new ToolStripSeparator());
+        menu.Items.Add("Set desktop password…", null, (_, _) =>
+        {
+            var current = _store.Load().DesktopPassword;
+            using var form = new Form
+            {
+                Text = "Desktop Password",
+                Width = 380,
+                Height = 160,
+                StartPosition = FormStartPosition.CenterScreen,
+                FormBorderStyle = FormBorderStyle.FixedDialog,
+                MinimizeBox = false,
+                MaximizeBox = false,
+            };
+            var hint = new Label { Text = "Password for remote desktop (leave empty to disable):", Left = 12, Top = 12, AutoSize = true };
+            var box = new TextBox { Left = 12, Top = 34, Width = 340, Text = current, UseSystemPasswordChar = true };
+            var showCheck = new CheckBox { Text = "Show characters", Left = 12, Top = 64, AutoSize = true };
+            showCheck.CheckedChanged += (_, _) => box.UseSystemPasswordChar = !showCheck.Checked;
+            var ok = new Button { Text = "Save", DialogResult = DialogResult.OK, Left = 272, Top = 86 };
+            var cancel = new Button { Text = "Cancel", DialogResult = DialogResult.Cancel, Left = 192, Top = 86 };
+            form.Controls.Add(hint);
+            form.Controls.Add(box);
+            form.Controls.Add(showCheck);
+            form.Controls.Add(ok);
+            form.Controls.Add(cancel);
+            form.AcceptButton = ok;
+            form.CancelButton = cancel;
+            if (form.ShowDialog() != DialogResult.OK) return;
+            var s = _store.Load();
+            s.DesktopPassword = box.Text.Trim();
+            _store.Save(s);
+            MessageBox.Show(string.IsNullOrEmpty(s.DesktopPassword) ? "Desktop password removed." : "Desktop password updated.", "Bluey", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        });
         menu.Items.Add("Show connection address", null, (_, _) =>
             MessageBox.Show("On the phone, Bluey finds this PC by itself.\nIf it does not, type this address:\n\n" + _phones.AddressText,
                 "Bluey", MessageBoxButtons.OK, MessageBoxIcon.Information));

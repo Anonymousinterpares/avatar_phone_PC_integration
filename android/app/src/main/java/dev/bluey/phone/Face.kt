@@ -72,6 +72,18 @@ data class Ui(
     val awake: Boolean = false,
     val micOn: Boolean = false,
     val micLevel: Float = 0f,
+    val connected: Boolean = false,
+    val deskMode: Boolean = false,
+    val deskFrame: android.graphics.Bitmap? = null,
+    val deskFps: Int = 10,
+    val deskQuality: Int = 60,
+    val deskScale: Float = 0.5f,
+    val deskGrayscale: Boolean = false,
+    val deskNeedsPassword: Boolean = false,
+    val deskAuthenticated: Boolean = false,
+    val deskCropFrame: android.graphics.Bitmap? = null,
+    val deskCropRect: androidx.compose.ui.geometry.Rect? = null,
+    val deskRememberPassword: Boolean = false,
 )
 
 private val Berry1 = Color(0xFFA9BCFF)
@@ -92,6 +104,7 @@ fun BlueyScreen(
     onHoldStart: () -> Unit,
     onHoldEnd: () -> Unit,
     onType: (String) -> Unit,
+    onDesktop: () -> Unit,
 ) {
     var typingOpen by remember { mutableStateOf(false) }
     var draft by remember { mutableStateOf("") }
@@ -193,6 +206,12 @@ fun BlueyScreen(
             Button(onClick = { onPick(host) }, modifier = Modifier.fillMaxWidth()) {
                 Text(host.label)
             }
+        }
+        Button(
+            onClick = onDesktop,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text("Remote Desktop")
         }
     }
 }

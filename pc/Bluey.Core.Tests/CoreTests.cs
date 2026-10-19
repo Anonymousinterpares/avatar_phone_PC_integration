@@ -405,7 +405,7 @@ public sealed class FakeDesk : IDesk
         "Notepad",
         ScreenSize));
 
-    public Task ClickAsync(PointD point, bool right, int count, CancellationToken cancellationToken)
+    public Task ClickAsync(PointD point, bool right, int count, CancellationToken cancellationToken, bool restore = false)
     {
         Clicks.Add(point);
         return Task.CompletedTask;
@@ -413,8 +413,8 @@ public sealed class FakeDesk : IDesk
 
     public Task TypeAsync(string text, Func<string, Task> onChunk, CancellationToken cancellationToken) => Task.CompletedTask;
     public Task PressAsync(string keys, CancellationToken cancellationToken) => Task.CompletedTask;
-    public Task ScrollAsync(PointD point, int dx, int dy, CancellationToken cancellationToken) => Task.CompletedTask;
-    public Task DragAsync(PointD from, PointD to, CancellationToken cancellationToken) => Task.CompletedTask;
+    public Task ScrollAsync(PointD point, int dx, int dy, CancellationToken cancellationToken, bool restore = false) => Task.CompletedTask;
+    public Task DragAsync(PointD from, PointD to, CancellationToken cancellationToken, bool restore = false) => Task.CompletedTask;
     public Task<string> OpenAppAsync(string name, CancellationToken cancellationToken) => Task.FromResult("Opened " + name);
     public string OpenUrl(string url) => "Opened.";
     public bool FocusedFieldIsPassword() => false;

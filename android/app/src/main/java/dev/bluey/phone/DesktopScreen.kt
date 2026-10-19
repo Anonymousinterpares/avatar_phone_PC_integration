@@ -1,0 +1,474 @@
+package dev.bluey.phone
+
+import android.graphics.Bitmap
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Button
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.Slider
+import androidx.compose.material3.Switch
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextField
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.delay
+import kotlin.math.hypot
+import kotlin.math.roundToInt
+
+@Composable
+fun DesktopPasswordScreen(
+    initialPassword: String = "",
+    initialRemember: Boolean = true,
+    onSubmit: (password: String, remember: Boolean) -> Unit,
+    onBack: () -> Unit,
+) {
+    var password by remember { mutableStateOf(initialPassword) }
+    var rememberPassword by remember { mutableStateOf(initialRemember) }
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black)
+            .padding(24.dp),
+        verticalArrangement = Arrangement.Center,
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Text("Desktop Password", color = Color.White, fontSize = 24.sp)
+        Spacer(Modifier.height(16.dp))
+        Text(
+            "The PC requires a password for remote desktop.",
+            color = Color(0xFFB9B2CC),
+            fontSize = 14.sp,
+            textAlign = TextAlign.Center,
+        )
+        Spacer(Modifier.height(24.dp))
+        TextField(
+            value = password,
+            onValueChange = { password = it },
+            label = { Text("Password") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+            visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
+        )
+        Spacer(Modifier.height(12.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.Start,
+        ) {
+            Checkbox(
+                checked = rememberPassword,
+                onCheckedChange = { rememberPassword = it },
+            )
+            Spacer(Modifier.width(8.dp))
+            Text("Remember password on this phone", color = Color.White, fontSize = 14.sp)
+        }
+        Spacer(Modifier.height(20.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Button(onClick = onBack) { Text("Back") }
+            Button(onClick = { onSubmit(password, rememberPassword) }) { Text("Connect") }
+        }
+    }
+}
+
+@Composable
+fun DesktopViewScreen(
+    frame: Bitmap?,
+    cropFrame: Bitmap? = null,
+    cropRect: Rect? = null,
+    fps: Int,
+    quality: Int,
+    scale: Float,
+    grayscale: Boolean,
+    onSettingsChanged: (fps: Int, quality: Int, scale: Float, grayscale: Boolean) -> Unit,
+    onTouch: (action: String, x: Float, y: Float, extra: Map<String, Any>) -> Unit,
+    onCropChanged: (cropX: Float, cropY: Float, cropW: Float, cropH: Float) -> Unit = { _, _, _, _ -> },
+    onKeyboard: () -> Unit,
+    onBack: () -> Unit,
+    onToggleOrientation: () -> Unit,
+) {
+    var showSettings by remember { mutableStateOf(false) }
+    var hideControls by remember { mutableStateOf(false) }
+    var localFps by remember(fps) { mutableIntStateOf(fps) }
+    var localQuality by remember(quality) { mutableIntStateOf(quality) }
+    var localScale by remember(scale) { mutableFloatStateOf(scale) }
+    var localGrayscale by remember(grayscale) { mutableStateOf(grayscale) }
+    var showKeyboard by remember { mutableStateOf(false) }
+    var keyText by remember { mutableStateOf("") }
+
+    var zoomScale by remember { mutableFloatStateOf(1.0f) }
+    var panOffset by remember { mutableStateOf(Offset.Zero) }
+    var canvasSize by remember { mutableStateOf(IntSize.Zero) }
+
+    val currentFrame by rememberUpdatedState(frame)
+    val currentOnTouch by rememberUpdatedState(onTouch)
+
+    // Report crop changes with debouncing to request high-res zoomed streaming from PC
+    LaunchedEffect(zoomScale, panOffset) {
+        if (zoomScale <= 1.05f) {
+            onCropChanged(0f, 0f, 1f, 1f)
+        } else {
+            delay(250)
+            val current = currentFrame
+            if (current != null && canvasSize.width > 0 && canvasSize.height > 0) {
+                val canvasW = canvasSize.width.toFloat()
+                val canvasH = canvasSize.height.toFloat()
+                val imgW = current.width.toFloat()
+                val imgH = current.height.toFloat()
+                val fitScale = minOf(canvasW / imgW, canvasH / imgH)
+                val totalW = imgW * fitScale * zoomScale
+                val totalH = imgH * fitScale * zoomScale
+                val maxPanX = if (totalW > canvasW) (totalW - canvasW) / 2f else 0f
+                val maxPanY = if (totalH > canvasH) (totalH - canvasH) / 2f else 0f
+                val curPanX = panOffset.x.coerceIn(-maxPanX, maxPanX)
+                val curPanY = panOffset.y.coerceIn(-maxPanY, maxPanY)
+                val drawLeft = (canvasW / 2f + curPanX) - totalW / 2f
+                val drawTop = (canvasH / 2f + curPanY) - totalH / 2f
+
+                val cropX = ((0f - drawLeft) / totalW).coerceIn(0f, 1f)
+                val cropY = ((0f - drawTop) / totalH).coerceIn(0f, 1f)
+                val cropR = ((canvasW - drawLeft) / totalW).coerceIn(0f, 1f)
+                val cropB = ((canvasH - drawTop) / totalH).coerceIn(0f, 1f)
+                val cropW = (cropR - cropX).coerceIn(0.05f, 1f)
+                val cropH = (cropB - cropY).coerceIn(0.05f, 1f)
+                onCropChanged(cropX, cropY, cropW, cropH)
+            }
+        }
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black),
+    ) {
+        if (!hideControls) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(Color(0xFF1A1A2E))
+                    .padding(horizontal = 6.dp, vertical = 4.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Button(onClick = onBack) { Text("← Back", fontSize = 11.sp) }
+
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Button(onClick = {
+                        val next = (zoomScale / 1.3f).coerceIn(1.0f, 5.0f)
+                        zoomScale = if (next <= 1.05f) 1.0f else next
+                        if (zoomScale <= 1.05f) panOffset = Offset.Zero
+                    }) { Text("−", fontSize = 13.sp) }
+
+                    Button(onClick = {
+                        zoomScale = (zoomScale * 1.3f).coerceIn(1.0f, 5.0f)
+                    }) { Text("+", fontSize = 13.sp) }
+
+                    if (zoomScale > 1.05f) {
+                        Button(onClick = {
+                            zoomScale = 1.0f
+                            panOffset = Offset.Zero
+                        }) {
+                            Text("${(zoomScale * 100).roundToInt()}%", fontSize = 11.sp)
+                        }
+                    }
+
+                    Button(onClick = onToggleOrientation) { Text("🔄", fontSize = 13.sp) }
+                    Button(onClick = { hideControls = true }) { Text("⛶", fontSize = 13.sp) }
+                    Button(onClick = { showKeyboard = !showKeyboard }) { Text("⌨", fontSize = 13.sp) }
+                    Button(onClick = { showSettings = !showSettings }) { Text("⚙", fontSize = 13.sp) }
+                }
+            }
+
+            if (showSettings) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(Color(0xFF1A1A2E))
+                        .padding(12.dp),
+                ) {
+                    Text("FPS: $localFps", color = Color.White, fontSize = 13.sp)
+                    Slider(
+                        value = localFps.toFloat(),
+                        onValueChange = { localFps = it.roundToInt() },
+                        onValueChangeFinished = { onSettingsChanged(localFps, localQuality, localScale, localGrayscale) },
+                        valueRange = 1f..30f,
+                        steps = 28,
+                    )
+                    Text("JPEG Quality: $localQuality", color = Color.White, fontSize = 13.sp)
+                    Slider(
+                        value = localQuality.toFloat(),
+                        onValueChange = { localQuality = it.roundToInt() },
+                        onValueChangeFinished = { onSettingsChanged(localFps, localQuality, localScale, localGrayscale) },
+                        valueRange = 10f..95f,
+                        steps = 16,
+                    )
+                    Text("Resolution: ${(localScale * 100).roundToInt()}%", color = Color.White, fontSize = 13.sp)
+                    Slider(
+                        value = localScale,
+                        onValueChange = { localScale = it },
+                        onValueChangeFinished = { onSettingsChanged(localFps, localQuality, localScale, localGrayscale) },
+                        valueRange = 0.1f..1f,
+                    )
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("Grayscale", color = Color.White, fontSize = 13.sp)
+                        Switch(
+                            checked = localGrayscale,
+                            onCheckedChange = {
+                                localGrayscale = it
+                                onSettingsChanged(localFps, localQuality, localScale, it)
+                            },
+                        )
+                    }
+                }
+            }
+
+            if (showKeyboard) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(Color(0xFF1A1A2E))
+                        .padding(8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    TextField(
+                        value = keyText,
+                        onValueChange = { keyText = it },
+                        modifier = Modifier.weight(1f),
+                        singleLine = true,
+                        label = { Text("Type here") },
+                    )
+                    Button(onClick = {
+                        if (keyText.isNotEmpty()) {
+                            onTouch("type", 0f, 0f, mapOf("text" to keyText))
+                            keyText = ""
+                        }
+                    }) { Text("Send") }
+                    Button(onClick = { onTouch("press", 0f, 0f, mapOf("keys" to "enter")) }) { Text("↵") }
+                }
+            }
+        }
+
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .weight(1f)
+                .onSizeChanged { canvasSize = it }
+                .pointerInput(Unit) {
+                    awaitEachGesture {
+                        val down = awaitFirstDown(requireUnconsumed = false)
+                        val startTime = System.currentTimeMillis()
+                        var isPinching = false
+                        var movedOneFinger = false
+                        var prevDistance = 0f
+                        var prevCentroid = Offset.Zero
+                        val touchSlop = 12f
+
+                        while (true) {
+                            val event = awaitPointerEvent()
+                            val activePointers = event.changes.filter { it.pressed }
+                            if (activePointers.isEmpty()) break
+
+                            if (activePointers.size >= 2) {
+                                isPinching = true
+                                val p1 = activePointers[0].position
+                                val p2 = activePointers[1].position
+                                val distance = hypot(p1.x - p2.x, p1.y - p2.y)
+                                val centroid = Offset((p1.x + p2.x) / 2f, (p1.y + p2.y) / 2f)
+
+                                if (prevDistance > 0f) {
+                                    val factor = distance / prevDistance
+                                    val newZoom = (zoomScale * factor).coerceIn(1.0f, 5.0f)
+                                    val dPan = centroid - prevCentroid
+                                    val newPan = panOffset + dPan
+
+                                    val canvasW = size.width.toFloat().coerceAtLeast(1f)
+                                    val canvasH = size.height.toFloat().coerceAtLeast(1f)
+                                    val frameBmp = currentFrame
+                                    val imgW = frameBmp?.width?.toFloat() ?: canvasW
+                                    val imgH = frameBmp?.height?.toFloat() ?: canvasH
+                                    val fitScale = minOf(canvasW / imgW, canvasH / imgH)
+                                    val totalW = imgW * fitScale * newZoom
+                                    val totalH = imgH * fitScale * newZoom
+                                    val maxPanX = if (totalW > canvasW) (totalW - canvasW) / 2f else 0f
+                                    val maxPanY = if (totalH > canvasH) (totalH - canvasH) / 2f else 0f
+
+                                    zoomScale = if (newZoom <= 1.05f) 1.0f else newZoom
+                                    panOffset = if (zoomScale <= 1.05f) Offset.Zero else Offset(
+                                        newPan.x.coerceIn(-maxPanX, maxPanX),
+                                        newPan.y.coerceIn(-maxPanY, maxPanY),
+                                    )
+                                }
+                                prevDistance = distance
+                                prevCentroid = centroid
+                                activePointers.forEach { it.consume() }
+                            } else {
+                                prevDistance = 0f
+                                if (!isPinching && activePointers.size == 1) {
+                                    val pointer = activePointers[0]
+                                    val canvasW = size.width.toFloat().coerceAtLeast(1f)
+                                    val canvasH = size.height.toFloat().coerceAtLeast(1f)
+                                    val frameBmp = currentFrame
+                                    val imgW = frameBmp?.width?.toFloat() ?: canvasW
+                                    val imgH = frameBmp?.height?.toFloat() ?: canvasH
+
+                                    val dist = hypot(pointer.position.x - down.position.x, pointer.position.y - down.position.y)
+                                    if (dist > touchSlop || movedOneFinger) {
+                                        movedOneFinger = true
+                                        val (nx, ny) = canvasToPc(pointer.position, canvasW, canvasH, imgW, imgH, zoomScale, panOffset)
+                                        currentOnTouch("move", nx, ny, emptyMap())
+                                    }
+                                    pointer.consume()
+                                }
+                            }
+                        }
+
+                        if (!isPinching && !movedOneFinger) {
+                            val canvasW = size.width.toFloat().coerceAtLeast(1f)
+                            val canvasH = size.height.toFloat().coerceAtLeast(1f)
+                            val frameBmp = currentFrame
+                            val imgW = frameBmp?.width?.toFloat() ?: canvasW
+                            val imgH = frameBmp?.height?.toFloat() ?: canvasH
+                            val (nx, ny) = canvasToPc(down.position, canvasW, canvasH, imgW, imgH, zoomScale, panOffset)
+                            val duration = System.currentTimeMillis() - startTime
+                            if (duration > 400) {
+                                currentOnTouch("click", nx, ny, mapOf("right" to true))
+                            } else {
+                                currentOnTouch("click", nx, ny, emptyMap())
+                            }
+                        }
+                    }
+                },
+        ) {
+            if (frame != null) {
+                val imageBitmap = remember(frame) { frame.asImageBitmap() }
+                val cropImageBitmap = remember(cropFrame) { cropFrame?.asImageBitmap() }
+
+                Canvas(
+                    modifier = Modifier.fillMaxSize(),
+                ) {
+                    val canvasW = size.width
+                    val canvasH = size.height
+                    val imgW = imageBitmap.width.toFloat()
+                    val imgH = imageBitmap.height.toFloat()
+                    val fitScale = minOf(canvasW / imgW, canvasH / imgH)
+                    val baseW = imgW * fitScale
+                    val baseH = imgH * fitScale
+                    val totalW = baseW * zoomScale
+                    val totalH = baseH * zoomScale
+
+                    val maxPanX = if (totalW > canvasW) (totalW - canvasW) / 2f else 0f
+                    val maxPanY = if (totalH > canvasH) (totalH - canvasH) / 2f else 0f
+                    val curPanX = panOffset.x.coerceIn(-maxPanX, maxPanX)
+                    val curPanY = panOffset.y.coerceIn(-maxPanY, maxPanY)
+
+                    val drawLeft = (canvasW / 2f + curPanX) - totalW / 2f
+                    val drawTop = (canvasH / 2f + curPanY) - totalH / 2f
+
+                    // Draw base desktop frame
+                    drawImage(
+                        image = imageBitmap,
+                        srcOffset = IntOffset.Zero,
+                        srcSize = IntSize(imageBitmap.width, imageBitmap.height),
+                        dstOffset = IntOffset(drawLeft.roundToInt(), drawTop.roundToInt()),
+                        dstSize = IntSize(totalW.roundToInt().coerceAtLeast(1), totalH.roundToInt().coerceAtLeast(1)),
+                    )
+
+                    // Draw high-res crop frame on top if available for the zoomed region
+                    if (cropImageBitmap != null && cropRect != null && (cropRect.width < 0.98f || cropRect.height < 0.98f)) {
+                        val cropDstLeft = drawLeft + cropRect.left * totalW
+                        val cropDstTop = drawTop + cropRect.top * totalH
+                        val cropDstW = cropRect.width * totalW
+                        val cropDstH = cropRect.height * totalH
+
+                        drawImage(
+                            image = cropImageBitmap,
+                            srcOffset = IntOffset.Zero,
+                            srcSize = IntSize(cropImageBitmap.width, cropImageBitmap.height),
+                            dstOffset = IntOffset(cropDstLeft.roundToInt(), cropDstTop.roundToInt()),
+                            dstSize = IntSize(cropDstW.roundToInt().coerceAtLeast(1), cropDstH.roundToInt().coerceAtLeast(1)),
+                        )
+                    }
+                }
+            } else {
+                Box(
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text("Waiting for first frame…", color = Color(0xFFB9B2CC), fontSize = 16.sp)
+                }
+            }
+
+            if (hideControls) {
+                Button(
+                    onClick = { hideControls = false },
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(8.dp),
+                    shape = RoundedCornerShape(12.dp),
+                ) {
+                    val label = if (zoomScale > 1.05f) "⚙ ${(zoomScale * 100).roundToInt()}%" else "⚙ Controls"
+                    Text(label, fontSize = 11.sp)
+                }
+            }
+        }
+    }
+}
+
+private fun canvasToPc(
+    pos: Offset,
+    canvasW: Float,
+    canvasH: Float,
+    imgW: Float,
+    imgH: Float,
+    zoomScale: Float,
+    pan: Offset,
+): Pair<Float, Float> {
+    if (imgW <= 0f || imgH <= 0f || canvasW <= 0f || canvasH <= 0f) return Pair(0f, 0f)
+    val fitScale = minOf(canvasW / imgW, canvasH / imgH)
+    val totalW = imgW * fitScale * zoomScale
+    val totalH = imgH * fitScale * zoomScale
+    val maxPanX = if (totalW > canvasW) (totalW - canvasW) / 2f else 0f
+    val maxPanY = if (totalH > canvasH) (totalH - canvasH) / 2f else 0f
+    val curPanX = pan.x.coerceIn(-maxPanX, maxPanX)
+    val curPanY = pan.y.coerceIn(-maxPanY, maxPanY)
+
+    val drawLeft = (canvasW / 2f + curPanX) - totalW / 2f
+    val drawTop = (canvasH / 2f + curPanY) - totalH / 2f
+
+    val nx = ((pos.x - drawLeft) / totalW).coerceIn(0f, 1f)
+    val ny = ((pos.y - drawTop) / totalH).coerceIn(0f, 1f)
+    return Pair(nx, ny)
+}

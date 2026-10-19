@@ -67,7 +67,7 @@ public sealed class WindowsDesk : IDesk
         }
     }
 
-    public async Task ClickAsync(PointD point, bool right, int count, CancellationToken cancellationToken)
+    public async Task ClickAsync(PointD point, bool right, int count, CancellationToken cancellationToken, bool restore = false)
     {
         var saved = Mouse;
         Move(point);
@@ -79,7 +79,8 @@ public sealed class WindowsDesk : IDesk
             MouseButton(point, right, down: false);
             if (i + 1 < count) await Task.Delay(80, cancellationToken);
         }
-        Warp(saved);
+        if (restore) Warp(saved);
+        else Warp(point);
     }
 
     public async Task TypeAsync(string text, Func<string, Task> onChunk, CancellationToken cancellationToken)
@@ -107,7 +108,7 @@ public sealed class WindowsDesk : IDesk
         return Task.CompletedTask;
     }
 
-    public async Task ScrollAsync(PointD point, int dx, int dy, CancellationToken cancellationToken)
+    public async Task ScrollAsync(PointD point, int dx, int dy, CancellationToken cancellationToken, bool restore = false)
     {
         var saved = Mouse;
         Move(point);
@@ -118,10 +119,11 @@ public sealed class WindowsDesk : IDesk
             if (dx != 0) Wheel(point, -(dx / steps), horizontal: true);
             await Task.Delay(16, cancellationToken);
         }
-        Warp(saved);
+        if (restore) Warp(saved);
+        else Warp(point);
     }
 
-    public async Task DragAsync(PointD from, PointD to, CancellationToken cancellationToken)
+    public async Task DragAsync(PointD from, PointD to, CancellationToken cancellationToken, bool restore = false)
     {
         var saved = Mouse;
         Move(from);
@@ -135,7 +137,8 @@ public sealed class WindowsDesk : IDesk
             await Task.Delay(16, cancellationToken);
         }
         MouseButton(to, right: false, down: false);
-        Warp(saved);
+        if (restore) Warp(saved);
+        else Warp(to);
     }
 
     public async Task<string> OpenAppAsync(string name, CancellationToken cancellationToken)

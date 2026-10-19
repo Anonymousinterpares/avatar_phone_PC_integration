@@ -18,6 +18,7 @@ public partial class App : System.Windows.Application
     private CursorOverlay? _overlay;
     private CharacterSession? _session;
     private SupertonicSpeaker? _speaker;
+    private DesktopStreamer? _streamer;
 
     protected override void OnStartup(StartupEventArgs e)
     {
@@ -38,7 +39,168 @@ public partial class App : System.Windows.Application
         _session = new CharacterSession(brains, desk, _speaker);
         _session.CaptionChanged += text => _overlay.SetCaption(text);
         _session.PointChanged += point => _overlay.PointAt(point);
-        _phones = new PhoneLink((packet, push, token) => _session.HandleAsync(packet, push, token));
+        _streamer = new DesktopStreamer();
+        _phones = new PhoneLink(async (packet, push, token) =>
+        {
+            switch (packet.Command)
+            {
+                case "deskAuth":
+                {
+                    var currentSettings = store.Load();
+                    var password = currentSettings.DesktopPassword;
+                    if (string.IsNullOrEmpty(password))
+                        return Packet.Of("deskAuth", "ok", packet.CallId);
+                    var attempt = packet.Text ?? "";
+                    if (attempt == password)
+                        return Packet.Of("deskAuth", "ok", packet.CallId);
+                    return Packet.Of("deskAuth", "fail", packet.CallId);
+                }
+                case "deskStart":
+                {
+                    var fps = 10;
+                    var quality = 60;
+                    var scale = 0.5;
+                    var grayscale = false;
+                    try
+                    {
+                        using var doc = System.Text.Json.JsonDocument.Parse(packet.Text ?? "{}");
+                        var root = doc.RootElement;
+                        if (root.TryGetProperty("fps", out var f) && f.TryGetInt32(out var fv)) fps = fv;
+                        if (root.TryGetProperty("quality", out var q) && q.TryGetInt32(out var qv)) quality = qv;
+                        if (root.TryGetProperty("scale", out var s) && s.TryGetDouble(out var sv)) scale = sv;
+                        if (root.TryGetProperty("grayscale", out var g) && g.ValueKind == System.Text.Json.JsonValueKind.True) grayscale = true;
+                    }
+                    catch { }
+                    _streamer!.Start(push, fps, quality, scale, grayscale);
+                    return Packet.Of("deskStarted", null, packet.CallId);
+                }
+                case "deskSettings":
+                {
+                    var fps = 10;
+                    var quality = 60;
+                    var scale = 0.5;
+                    var grayscale = false;
+                    try
+                    {
+                        using var doc = System.Text.Json.JsonDocument.Parse(packet.Text ?? "{}");
+                        var root = doc.RootElement;
+                        if (root.TryGetProperty("fps", out var f) && f.TryGetInt32(out var fv)) fps = fv;
+                        if (root.TryGetProperty("quality", out var q) && q.TryGetInt32(out var qv)) quality = qv;
+                        if (root.TryGetProperty("scale", out var s) && s.TryGetDouble(out var sv)) scale = sv;
+                        if (root.TryGetProperty("grayscale", out var g) && g.ValueKind == System.Text.Json.JsonValueKind.True) grayscale = true;
+                    }
+                    catch { }
+                    _streamer!.UpdateSettings(fps, quality, scale, grayscale);
+                    return null;
+                }
+                case "deskStop":
+                    _streamer!.Stop();
+                    _streamer!.UpdateCrop(0, 0, 1.0, 1.0);
+                    return Packet.Of("deskStopped", null, packet.CallId);
+                case "deskCrop":
+                {
+                    try
+                    {
+                        using var doc = System.Text.Json.JsonDocument.Parse(packet.Text ?? "{}");
+                        var root = doc.RootElement;
+                        var cx = root.GetProperty("cropX").GetDouble();
+                        var cy = root.GetProperty("cropY").GetDouble();
+                        var cw = root.GetProperty("cropW").GetDouble();
+                        var ch = root.GetProperty("cropH").GetDouble();
+                        _streamer?.UpdateCrop(cx, cy, cw, ch);
+                    }
+                    catch { }
+                    return null;
+                }
+                case "deskInput":
+                {
+                    try
+                    {
+                        using var doc = System.Text.Json.JsonDocument.Parse(packet.Text ?? "{}");
+                        var root = doc.RootElement;
+                        var action = root.GetProperty("action").GetString() ?? "";
+                        var screenBounds = System.Windows.Forms.Screen.PrimaryScreen?.Bounds ?? System.Windows.Forms.Screen.AllScreens[0].Bounds;
+                        switch (action)
+                        {
+                            case "click":
+                            {
+                                var nx = root.GetProperty("x").GetDouble();
+                                var ny = root.GetProperty("y").GetDouble();
+                                var px = screenBounds.Left + nx * screenBounds.Width;
+                                var py = screenBounds.Top + ny * screenBounds.Height;
+                                var right = root.TryGetProperty("right", out var rv) && rv.ValueKind == System.Text.Json.JsonValueKind.True;
+                                var pt = new Bluey.Desk.PointD(px, py);
+                                desk.Warp(pt);
+                                await desk.ClickAsync(pt, right, 1, token, restore: false);
+                                desk.Warp(pt);
+                                break;
+                            }
+                            case "doubleClick":
+                            {
+                                var nx = root.GetProperty("x").GetDouble();
+                                var ny = root.GetProperty("y").GetDouble();
+                                var px = screenBounds.Left + nx * screenBounds.Width;
+                                var py = screenBounds.Top + ny * screenBounds.Height;
+                                var pt = new Bluey.Desk.PointD(px, py);
+                                desk.Warp(pt);
+                                await desk.ClickAsync(pt, false, 2, token, restore: false);
+                                desk.Warp(pt);
+                                break;
+                            }
+                            case "scroll":
+                            {
+                                var nx = root.GetProperty("x").GetDouble();
+                                var ny = root.GetProperty("y").GetDouble();
+                                var px = screenBounds.Left + nx * screenBounds.Width;
+                                var py = screenBounds.Top + ny * screenBounds.Height;
+                                var dx = root.TryGetProperty("dx", out var dxv) ? (int)(dxv.GetDouble() * 120) : 0;
+                                var dy = root.TryGetProperty("dy", out var dyv) ? (int)(dyv.GetDouble() * 120) : 0;
+                                var pt = new Bluey.Desk.PointD(px, py);
+                                desk.Warp(pt);
+                                await desk.ScrollAsync(pt, dx, dy, token, restore: false);
+                                desk.Warp(pt);
+                                break;
+                            }
+                            case "type":
+                            {
+                                var text = root.GetProperty("text").GetString() ?? "";
+                                await desk.TypeAsync(text, _ => Task.CompletedTask, token);
+                                break;
+                            }
+                            case "press":
+                            {
+                                var keys = root.GetProperty("keys").GetString() ?? "";
+                                await desk.PressAsync(keys, token);
+                                break;
+                            }
+                            case "drag":
+                            {
+                                var fx = root.GetProperty("fromX").GetDouble();
+                                var fy = root.GetProperty("fromY").GetDouble();
+                                var tx = root.GetProperty("toX").GetDouble();
+                                var ty = root.GetProperty("toY").GetDouble();
+                                var from = new Bluey.Desk.PointD(screenBounds.Left + fx * screenBounds.Width, screenBounds.Top + fy * screenBounds.Height);
+                                var to = new Bluey.Desk.PointD(screenBounds.Left + tx * screenBounds.Width, screenBounds.Top + ty * screenBounds.Height);
+                                await desk.DragAsync(from, to, token, restore: false);
+                                desk.Warp(to);
+                                break;
+                            }
+                            case "move":
+                            {
+                                var nx = root.GetProperty("x").GetDouble();
+                                var ny = root.GetProperty("y").GetDouble();
+                                desk.Warp(new Bluey.Desk.PointD(screenBounds.Left + nx * screenBounds.Width, screenBounds.Top + ny * screenBounds.Height));
+                                break;
+                            }
+                        }
+                    }
+                    catch { }
+                    return null;
+                }
+                default:
+                    return await _session!.HandleAsync(packet, push, token);
+            }
+        });
         _phones.Start();
         var hints = new UsageHintsWindow();
         hints.Show();
@@ -55,6 +217,7 @@ public partial class App : System.Windows.Application
 
     protected override void OnExit(ExitEventArgs e)
     {
+        _streamer?.Dispose();
         _phones?.Dispose();
         _speaker?.Dispose();
         _tray?.Dispose();

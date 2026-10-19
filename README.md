@@ -63,10 +63,46 @@ The phone app installs from an APK. There is no store listing.
 
 ## Connect the phone to the PC
 
-1. Put the phone and the PC on the same Wi-Fi. Mobile data alone will not see the PC.
+### On Local Wi-Fi
+1. Put the phone and the PC on the same Wi-Fi.
 2. Start the PC app with `Run-Bluey.cmd` and leave it running.
 3. Open Bluey on the phone. It looks for the PC and connects by itself.
 4. If it stays on “Looking for your PC…”, right-click the tray icon, choose **Show connection address**, and type that `host:port` into the phone. Tap **Connect**.
 5. Double-tap the face to wake him. Hold the big button to talk, then let go.
 
-The address changes when you restart the PC app. The phone finds the new one on the same Wi-Fi. If it does not, use **Show connection address** again.
+### Over the Internet with Tailscale
+1. Install [Tailscale](https://tailscale.com/) on both your PC and phone and sign in to the same account.
+2. In the PC tray, right-click Bluey and choose **Show connection address**. One of the addresses listed will be your Tailscale IP (e.g. `100.x.y.z:port`).
+3. Type that `100.x.y.z:port` into the PC address field on the phone and tap **Connect**. Your connection is encrypted end-to-end via WireGuard.
+
+## Remote Desktop & Password Protection
+
+You can view and control your PC screen live from your phone:
+
+1. **Set a password on PC**: Right-click the Bluey tray icon and select **Set desktop password…**. Enter your secret password and click **Save**. (Leave empty if you don't want password protection).
+2. **Access from phone**: Once connected to the PC, tap **Remote Desktop** on the phone.
+3. If a password is set, the app prompts you to enter it before granting screen access.
+4. **Live Controls & Tweaks**:
+   - **Settings (⚙)**: Live sliders to tweak:
+     - **FPS** (1 to 30)
+     - **JPEG Quality** (10% to 95%)
+     - **Resolution scale** (10% to 100%)
+     - **Grayscale switch** (cuts bandwidth by ~3× on cellular or poor connections)
+   - **Touch Interaction & Zoom**:
+     - Single-finger tap: left-click.
+     - Single-finger hold (>400ms): right-click.
+     - Single-finger drag: move PC cursor smoothly.
+     - Two-finger pinch: zoom in and out (1.0x to 5.0x).
+     - Two-finger drag: pan across the zoomed display.
+     - Top bar `+`, `−`, and `100%` buttons for quick zoom controls.
+     - Automatic high-resolution streaming: PC captures zoomed sub-regions at native resolution with ramped quality.
+   - **Password Security**:
+     - "Remember password" option caches credentials securely on the device.
+     - Session caching prevents repeated password prompts during the same connection.
+   - **Full Screen & Orientation**:
+     - Automatic landscape mode matching PC widescreen aspect ratio.
+     - `🔄` button toggles between landscape and portrait.
+     - Fullscreen immersive mode hides system bars by default across the entire app.
+   - **Keyboard (⌨)**: Toggle the on-screen typing bar to send text or Enter to the focused window.
+   - **← Back**: Returns to Bluey's face mode.
+

@@ -146,6 +146,7 @@ public sealed class AppSettings
     public string OpenRouterProvider { get; set; } = "modelrun";
     public string ChatGptModel { get; set; } = "gpt-6.1-sol";
     public ChatGptAccount? ChatGpt { get; set; }
+    public string DesktopPassword { get; set; } = "";
 
     public bool ModeIsReady() => Mode switch
     {

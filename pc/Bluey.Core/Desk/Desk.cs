@@ -23,11 +23,11 @@ public interface IDesk
     SizeD ScreenSize { get; }
     PointD Mouse { get; }
     Task<ScreenCapture> CaptureAsync(CancellationToken cancellationToken);
-    Task ClickAsync(PointD point, bool right, int count, CancellationToken cancellationToken);
+    Task ClickAsync(PointD point, bool right, int count, CancellationToken cancellationToken, bool restore = false);
     Task TypeAsync(string text, Func<string, Task> onChunk, CancellationToken cancellationToken);
     Task PressAsync(string keys, CancellationToken cancellationToken);
-    Task ScrollAsync(PointD point, int dx, int dy, CancellationToken cancellationToken);
-    Task DragAsync(PointD from, PointD to, CancellationToken cancellationToken);
+    Task ScrollAsync(PointD point, int dx, int dy, CancellationToken cancellationToken, bool restore = false);
+    Task DragAsync(PointD from, PointD to, CancellationToken cancellationToken, bool restore = false);
     Task<string> OpenAppAsync(string name, CancellationToken cancellationToken);
     string OpenUrl(string url);
     bool FocusedFieldIsPassword();

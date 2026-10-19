@@ -41,6 +41,7 @@ class MainActivity : ComponentActivity() {
     private var captionGeneration = 0
     private var wakeAfterPermission = false
     private var ui by mutableStateOf(Ui())
+    private var sessionPassword: String? = null
 
     private val permissions = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { result ->
         if (result[Manifest.permission.RECORD_AUDIO] != true) {
@@ -75,7 +76,14 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
+            window.attributes.layoutInDisplayCutoutMode =
+                WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+        }
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        androidx.core.view.WindowCompat.setDecorFitsSystemWindows(window, false)
+        setImmersiveMode(true)
+
         link = DeskLink(
             onPacket = { packet -> main.post { onPacket(packet) } },
             onDropped = { main.post { onDropped() } },
@@ -99,21 +107,62 @@ class MainActivity : ComponentActivity() {
         plan = PlanSpeech(this)
         finder = Finder(this) { name, host, port -> main.post { addHost(name, host, port) } }
         speaker.start()
-        ui = ui.copy(address = getSharedPreferences("bluey", MODE_PRIVATE).getString("address", "").orEmpty())
+        val prefs = getSharedPreferences("bluey", MODE_PRIVATE)
+        ui = ui.copy(
+            address = prefs.getString("address", "").orEmpty(),
+            deskRememberPassword = prefs.getBoolean("desk_remember_password", false),
+        )
         setContent {
-            BlueyScreen(
-                ui = ui,
-                onAddress = { ui = ui.copy(address = it) },
-                onConnect = { connectTyped() },
-                onPick = { host ->
-                    ui = ui.copy(address = "${host.host}:${host.port}")
-                    connect(host.host, host.port, force = true)
-                },
-                onDoubleTap = { if (ui.awake) sleep() else wake() },
-                onHoldStart = { holdStart() },
-                onHoldEnd = { holdEnd() },
-                onType = { sendTyped(it) },
-            )
+            if (ui.deskMode) {
+                androidx.activity.compose.BackHandler { stopDesktop() }
+                if (ui.deskNeedsPassword && !ui.deskAuthenticated) {
+                    val sp = getSharedPreferences("bluey", MODE_PRIVATE)
+                    val initialPass = if (sp.getBoolean("desk_remember_password", false)) {
+                        sp.getString("desk_password", "").orEmpty()
+                    } else {
+                        sessionPassword.orEmpty()
+                    }
+                    val initialRemember = sp.getBoolean("desk_remember_password", true)
+
+                    DesktopPasswordScreen(
+                        initialPassword = initialPass,
+                        initialRemember = initialRemember,
+                        onSubmit = { pass, remember -> submitDesktopPassword(pass, remember) },
+                        onBack = { stopDesktop() },
+                    )
+                } else {
+                    DesktopViewScreen(
+                        frame = ui.deskFrame,
+                        cropFrame = ui.deskCropFrame,
+                        cropRect = ui.deskCropRect,
+                        fps = ui.deskFps,
+                        quality = ui.deskQuality,
+                        scale = ui.deskScale,
+                        grayscale = ui.deskGrayscale,
+                        onSettingsChanged = { f, q, s, g -> sendDesktopSettings(f, q, s, g) },
+                        onTouch = { action, x, y, extra -> sendDesktopInput(action, x, y, extra) },
+                        onCropChanged = { cx, cy, cw, ch -> sendDesktopCrop(cx, cy, cw, ch) },
+                        onKeyboard = { },
+                        onBack = { stopDesktop() },
+                        onToggleOrientation = { toggleOrientation() },
+                    )
+                }
+            } else {
+                BlueyScreen(
+                    ui = ui,
+                    onAddress = { ui = ui.copy(address = it) },
+                    onConnect = { connectTyped() },
+                    onPick = { host ->
+                        ui = ui.copy(address = "${host.host}:${host.port}")
+                        connect(host.host, host.port, force = true)
+                    },
+                    onDoubleTap = { if (ui.awake) sleep() else wake() },
+                    onHoldStart = { holdStart() },
+                    onHoldEnd = { holdEnd() },
+                    onType = { sendTyped(it) },
+                    onDesktop = { startDesktop() },
+                )
+            }
         }
         finder.start()
     }
@@ -127,6 +176,34 @@ class MainActivity : ComponentActivity() {
         link.close()
         work.shutdownNow()
         super.onDestroy()
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus) {
+            setImmersiveMode(true)
+        }
+    }
+
+    private fun setImmersiveMode(enabled: Boolean = true) {
+        androidx.core.view.WindowCompat.setDecorFitsSystemWindows(window, !enabled)
+        val controller = androidx.core.view.WindowCompat.getInsetsController(window, window.decorView)
+        if (enabled) {
+            controller.systemBarsBehavior =
+                androidx.core.view.WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            controller.hide(androidx.core.view.WindowInsetsCompat.Type.systemBars())
+        } else {
+            controller.show(androidx.core.view.WindowInsetsCompat.Type.systemBars())
+        }
+    }
+
+    private fun toggleOrientation() {
+        val isLandscape = resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
+        requestedOrientation = if (isLandscape) {
+            android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+        } else {
+            android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+        }
     }
 
     private fun connectTyped() {
@@ -152,7 +229,7 @@ class MainActivity : ComponentActivity() {
                 getSharedPreferences("bluey", MODE_PRIVATE).edit().putString("address", "$host:$port").apply()
                 main.post {
                     connecting = false
-                    ui = ui.copy(status = "Connected. Double-tap the face to wake him.", address = "$host:$port", awake = false)
+                    ui = ui.copy(status = "Connected. Double-tap the face to wake him.", address = "$host:$port", awake = false, connected = true)
                 }
             } catch (ex: Exception) {
                 main.post {
@@ -443,6 +520,38 @@ class MainActivity : ComponentActivity() {
                 )
                 armCaptionExpiry()
             }
+            "deskFrame" -> {
+                val imageData = packet.optString("image", "")
+                if (imageData.isNotEmpty()) {
+                    try {
+                        val bytes = android.util.Base64.decode(imageData, android.util.Base64.DEFAULT)
+                        val bitmap = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                        if (bitmap != null) {
+                            val textStr = packet.optString("text", "{}")
+                            var cropX = 0f
+                            var cropY = 0f
+                            var cropW = 1f
+                            var cropH = 1f
+                            try {
+                                val doc = JSONObject(textStr)
+                                cropX = doc.optDouble("cropX", 0.0).toFloat()
+                                cropY = doc.optDouble("cropY", 0.0).toFloat()
+                                cropW = doc.optDouble("cropW", 1.0).toFloat()
+                                cropH = doc.optDouble("cropH", 1.0).toFloat()
+                            } catch (_: Exception) { }
+
+                            if (cropW < 0.98f || cropH < 0.98f) {
+                                ui = ui.copy(
+                                    deskCropFrame = bitmap,
+                                    deskCropRect = androidx.compose.ui.geometry.Rect(cropX, cropY, cropW, cropH),
+                                )
+                            } else {
+                                ui = ui.copy(deskFrame = bitmap, deskCropFrame = null, deskCropRect = null)
+                            }
+                        }
+                    } catch (_: Exception) { }
+                }
+            }
         }
     }
 
@@ -454,7 +563,159 @@ class MainActivity : ComponentActivity() {
         asking = false
         speechFailed = false
         captionGeneration++
-        ui = ui.copy(status = "The PC connection dropped.", awake = false, talking = false, mood = "sleepy", micOn = false, micLevel = 0f)
+        requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+        setImmersiveMode(true)
+        ui = ui.copy(
+            status = "The PC connection dropped.",
+            awake = false,
+            talking = false,
+            mood = "sleepy",
+            micOn = false,
+            micLevel = 0f,
+            connected = false,
+            deskMode = false,
+            deskFrame = null,
+            deskCropFrame = null,
+            deskCropRect = null,
+            deskAuthenticated = false,
+            deskNeedsPassword = false,
+        )
+    }
+
+    private fun startDesktop() {
+        if (!link.connected) {
+            ui = ui.copy(status = "Connect to the PC first.")
+            return
+        }
+        work.execute {
+            try {
+                val prefs = getSharedPreferences("bluey", MODE_PRIVATE)
+                val testPassword = sessionPassword
+                    ?: (if (prefs.getBoolean("desk_remember_password", false)) prefs.getString("desk_password", "") else null)
+                    ?: ""
+
+                val authReply = link.request("deskAuth", text = testPassword, timeoutMs = 10_000)
+                val result = authReply.optString("text", "")
+                main.post {
+                    if (result == "ok") {
+                        if (testPassword.isNotEmpty()) {
+                            sessionPassword = testPassword
+                        }
+                        ui = ui.copy(deskMode = true, deskAuthenticated = true, deskNeedsPassword = false)
+                        setImmersiveMode(true)
+                        requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+                        requestDesktopStream()
+                    } else {
+                        ui = ui.copy(deskMode = true, deskNeedsPassword = true, deskAuthenticated = false)
+                    }
+                }
+            } catch (ex: Exception) {
+                main.post { ui = ui.copy(status = ex.message ?: "Desktop auth failed.") }
+            }
+        }
+    }
+
+    private fun submitDesktopPassword(password: String, remember: Boolean) {
+        work.execute {
+            try {
+                val reply = link.request("deskAuth", text = password, timeoutMs = 10_000)
+                val result = reply.optString("text", "")
+                main.post {
+                    if (result == "ok") {
+                        sessionPassword = password
+                        val prefs = getSharedPreferences("bluey", MODE_PRIVATE).edit()
+                        if (remember) {
+                            prefs.putString("desk_password", password)
+                            prefs.putBoolean("desk_remember_password", true)
+                        } else {
+                            prefs.remove("desk_password")
+                            prefs.putBoolean("desk_remember_password", false)
+                        }
+                        prefs.apply()
+
+                        ui = ui.copy(deskAuthenticated = true, deskNeedsPassword = false)
+                        setImmersiveMode(true)
+                        requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+                        requestDesktopStream()
+                    } else {
+                        ui = ui.copy(status = "Wrong password.")
+                    }
+                }
+            } catch (ex: Exception) {
+                main.post { ui = ui.copy(status = ex.message ?: "Auth failed.") }
+            }
+        }
+    }
+
+    private fun requestDesktopStream() {
+        work.execute {
+            try {
+                val settings = JSONObject()
+                settings.put("fps", ui.deskFps)
+                settings.put("quality", ui.deskQuality)
+                settings.put("scale", ui.deskScale.toDouble())
+                settings.put("grayscale", ui.deskGrayscale)
+                link.request("deskStart", text = settings.toString(), timeoutMs = 10_000)
+            } catch (ex: Exception) {
+                main.post { ui = ui.copy(status = ex.message ?: "Could not start desktop.") }
+            }
+        }
+    }
+
+    private fun stopDesktop() {
+        work.execute {
+            try { link.request("deskStop", timeoutMs = 5_000) } catch (_: Exception) { }
+        }
+        requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+        setImmersiveMode(true)
+        ui = ui.copy(
+            deskMode = false,
+            deskFrame = null,
+            deskCropFrame = null,
+            deskCropRect = null,
+            deskAuthenticated = false,
+            deskNeedsPassword = false,
+        )
+    }
+
+    private fun sendDesktopCrop(cropX: Float, cropY: Float, cropW: Float, cropH: Float) {
+        work.execute {
+            try {
+                val crop = JSONObject()
+                crop.put("cropX", cropX.toDouble())
+                crop.put("cropY", cropY.toDouble())
+                crop.put("cropW", cropW.toDouble())
+                crop.put("cropH", cropH.toDouble())
+                link.send("deskCrop", crop.toString())
+            } catch (_: Exception) { }
+        }
+    }
+
+    private fun sendDesktopSettings(fps: Int, quality: Int, scale: Float, grayscale: Boolean) {
+        ui = ui.copy(deskFps = fps, deskQuality = quality, deskScale = scale, deskGrayscale = grayscale)
+        work.execute {
+            try {
+                val settings = JSONObject()
+                settings.put("fps", fps)
+                settings.put("quality", quality)
+                settings.put("scale", scale.toDouble())
+                settings.put("grayscale", grayscale)
+                link.send("deskSettings", settings.toString())
+            } catch (_: Exception) { }
+        }
+    }
+
+    private fun sendDesktopInput(action: String, x: Float, y: Float, extra: Map<String, Any>) {
+        work.execute {
+            try {
+                val input = JSONObject()
+                input.put("action", action)
+                input.put("x", x.toDouble())
+                input.put("y", y.toDouble())
+                for ((k, v) in extra) input.put(k, v)
+                link.send("deskInput", input.toString())
+            } catch (_: Exception) { }
+        }
     }
 
     private fun startMic() {
