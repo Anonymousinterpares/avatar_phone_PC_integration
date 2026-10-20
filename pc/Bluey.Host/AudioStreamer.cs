@@ -167,6 +167,34 @@ public sealed class AudioStreamer : IDisposable
             if (hr != 0 || ccObj is not IAudioCaptureClient capture) return;
             captureClient = capture;
 
+            // Keep the Windows Audio engine mixer continuously active with a silent render stream.
+            // By design, WASAPI loopback only receives clocking when the audio engine has an active stream.
+            IAudioClient? renderClient = null;
+            IAudioRenderClient? renderService = null;
+            try
+            {
+                var iidRenderClient = new Guid("1CB9AD4C-DBFA-4c32-B178-C2F568A703B2");
+                if (device.Activate(ref iidRenderClient, 1, IntPtr.Zero, out var rAcObj) == 0 && rAcObj is IAudioClient rc)
+                {
+                    renderClient = rc;
+                    if (renderClient.Initialize(AUDCLNT_SHAREMODE.AUDCLNT_SHAREMODE_SHARED, 0, 10_000_000, 0, pMixFormat, Guid.Empty) == 0)
+                    {
+                        var iidRenderService = new Guid("F294ACFC-3146-4483-A7BF-ADDCA7C260E2");
+                        if (renderClient.GetService(ref iidRenderService, out var rsObj) == 0 && rsObj is IAudioRenderClient rs)
+                        {
+                            renderService = rs;
+                            renderClient.GetBufferSize(out var bufFrames);
+                            if (renderService.GetBuffer(bufFrames, out _) == 0)
+                            {
+                                renderService.ReleaseBuffer(bufFrames, 0x00000002 /* AUDCLNT_BUFFERFLAGS_SILENT */);
+                            }
+                            renderClient.Start();
+                        }
+                    }
+                }
+            }
+            catch { }
+
             audioClient.Start();
 
             var chunkBuffer = new MemoryStream();
@@ -174,50 +202,65 @@ public sealed class AudioStreamer : IDisposable
 
             while (!token.IsCancellationRequested)
             {
-                bool hadData = false;
-
-                while (!token.IsCancellationRequested)
+                try
                 {
-                    hr = captureClient.GetNextPacketSize(out var nextPacketSize);
-                    if (hr != 0 || nextPacketSize == 0) break;
-
-                    hr = captureClient.GetBuffer(out var pData, out var numFramesToRead, out var flags, out _, out _);
-                    if (hr != 0) break;
-
-                    hadData = true;
-                    bool isSilent = (flags & AUDCLNT_BUFFERFLAGS.AUDCLNT_BUFFERFLAGS_SILENT) != 0;
-
-                    if (numFramesToRead > 0)
+                    // Feed silent render stream to keep mixer clocked
+                    if (renderClient != null && renderService != null)
                     {
-                        var processed = ProcessFrames(pData, (int)numFramesToRead, srcRate, srcChannels, isFloat, isSilent, _targetRate, _targetChannels);
-                        if (processed.Length > 0)
+                        if (renderClient.GetCurrentPadding(out var padding) == 0 &&
+                            renderClient.GetBufferSize(out var totalBuf) == 0)
                         {
-                            chunkBuffer.Write(processed, 0, processed.Length);
+                            uint needed = totalBuf - padding;
+                            if (needed > 0 && renderService.GetBuffer(needed, out _) == 0)
+                            {
+                                renderService.ReleaseBuffer(needed, 0x00000002 /* AUDCLNT_BUFFERFLAGS_SILENT */);
+                            }
                         }
                     }
 
-                    captureClient.ReleaseBuffer(numFramesToRead);
-                }
-
-                if (chunkBuffer.Length >= chunkThresholdBytes && _send != null)
-                {
-                    var pcmBytes = chunkBuffer.ToArray();
-                    chunkBuffer.SetLength(0);
-
-                    var base64 = Convert.ToBase64String(pcmBytes);
-                    var packet = new Packet
+                    while (!token.IsCancellationRequested)
                     {
-                        Command = "deskAudio",
-                        Audio = base64,
-                        Text = $"{{\"rate\":{_targetRate},\"ch\":{_targetChannels}}}",
-                    };
-                    await _send(packet);
-                }
+                        hr = captureClient.GetNextPacketSize(out var nextPacketSize);
+                        if (hr != 0 || nextPacketSize == 0) break;
 
-                // If no audio was playing, sleep briefly to avoid high CPU usage
-                if (!hadData)
+                        hr = captureClient.GetBuffer(out var pData, out var numFramesToRead, out var flags, out _, out _);
+                        if (hr != 0) break;
+
+                        bool isSilent = (flags & AUDCLNT_BUFFERFLAGS.AUDCLNT_BUFFERFLAGS_SILENT) != 0;
+
+                        if (numFramesToRead > 0)
+                        {
+                            var processed = ProcessFrames(pData, (int)numFramesToRead, srcRate, srcChannels, isFloat, isSilent, _targetRate, _targetChannels);
+                            if (processed.Length > 0)
+                            {
+                                chunkBuffer.Write(processed, 0, processed.Length);
+                            }
+                        }
+
+                        captureClient.ReleaseBuffer(numFramesToRead);
+                    }
+
+                    if (chunkBuffer.Length >= chunkThresholdBytes && _send != null)
+                    {
+                        var pcmBytes = chunkBuffer.ToArray();
+                        chunkBuffer.SetLength(0);
+
+                        var base64 = Convert.ToBase64String(pcmBytes);
+                        var packet = new Packet
+                        {
+                            Command = "deskAudio",
+                            Audio = base64,
+                            Text = $"{{\"rate\":{_targetRate},\"ch\":{_targetChannels}}}",
+                        };
+                        await _send(packet);
+                    }
+
+                    await Task.Delay(20, token);
+                }
+                catch (OperationCanceledException) { break; }
+                catch (Exception)
                 {
-                    try { await Task.Delay(20, token); }
+                    try { await Task.Delay(40, token); }
                     catch (OperationCanceledException) { break; }
                 }
             }
@@ -409,6 +452,14 @@ public sealed class AudioStreamer : IDisposable
     }
 
     [ComImport]
+    [Guid("F294ACFC-3146-4483-A7BF-ADDCA7C260E2"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    private interface IAudioRenderClient
+    {
+        [PreserveSig] int GetBuffer(uint NumFramesRequested, out IntPtr ppData);
+        [PreserveSig] int ReleaseBuffer(uint NumFramesWritten, uint dwFlags);
+    }
+
+    [ComImport]
     [Guid("5CDF2C82-841E-4546-9722-0CF74078229A"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
     private interface IAudioEndpointVolume
     {
@@ -434,3 +485,4 @@ public sealed class AudioStreamer : IDisposable
 
     #endregion
 }
+

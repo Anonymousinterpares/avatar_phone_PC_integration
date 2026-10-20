@@ -82,6 +82,7 @@ public sealed class PhoneLink : IDisposable
     {
         var buffer = new byte[64 * 1024];
         var length = 0;
+        var writeLock = new SemaphoreSlim(1, 1);
         try
         {
             while (!_cancel.IsCancellationRequested)
@@ -105,9 +106,26 @@ public sealed class PhoneLink : IDisposable
         {
             Drop(stream);
             client.Dispose();
+            writeLock.Dispose();
         }
 
-        Task SendToThis(Packet packet) => stream.WriteAsync(ProtocolJson.Encode(packet)).AsTask();
+        async Task SendToThis(Packet packet)
+        {
+            var bytes = ProtocolJson.Encode(packet);
+            try
+            {
+                await writeLock.WaitAsync(_cancel.Token);
+                try
+                {
+                    await stream.WriteAsync(bytes, _cancel.Token);
+                }
+                finally
+                {
+                    writeLock.Release();
+                }
+            }
+            catch { }
+        }
     }
 
     private void Drop(Stream stream)

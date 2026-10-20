@@ -19,8 +19,8 @@ class DesktopAudioPlayer {
         if (sampleRate != currentRate || channels != currentChannels || track == null) {
             reinit(sampleRate, channels)
         }
-        // Keep queue small (max ~200ms) to prevent audio drift or latency buildup
-        while (queue.size > 5) {
+        // Keep queue bounded to prevent latency buildup while absorbing network jitter
+        while (queue.size > 10) {
             queue.poll()
         }
         queue.offer(pcm)
@@ -34,45 +34,54 @@ class DesktopAudioPlayer {
 
         val channelConfig = if (channels == 2) AudioFormat.CHANNEL_OUT_STEREO else AudioFormat.CHANNEL_OUT_MONO
         val minBuf = AudioTrack.getMinBufferSize(sampleRate, channelConfig, AudioFormat.ENCODING_PCM_16BIT)
-        val bufSize = maxOf(minBuf, sampleRate * channels * 2 / 10) // ~100ms buffer
+        val safeMin = if (minBuf > 0) minBuf * 2 else 8192
+        val bufSize = maxOf(safeMin, sampleRate * channels * 2 / 4) // ~250ms buffer
 
-        track = AudioTrack.Builder()
-            .setAudioAttributes(
-                AudioAttributes.Builder()
-                    .setUsage(AudioAttributes.USAGE_MEDIA)
-                    .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
-                    .build()
-            )
-            .setAudioFormat(
-                AudioFormat.Builder()
-                    .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
-                    .setSampleRate(sampleRate)
-                    .setChannelMask(channelConfig)
-                    .build()
-            )
-            .setBufferSizeInBytes(bufSize)
-            .setTransferMode(AudioTrack.MODE_STREAM)
-            .build().also {
-                try { it.play() } catch (_: Exception) { }
-            }
+        try {
+            track = AudioTrack.Builder()
+                .setAudioAttributes(
+                    AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_MEDIA)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+                        .build()
+                )
+                .setAudioFormat(
+                    AudioFormat.Builder()
+                        .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                        .setSampleRate(sampleRate)
+                        .setChannelMask(channelConfig)
+                        .build()
+                )
+                .setBufferSizeInBytes(bufSize)
+                .setTransferMode(AudioTrack.MODE_STREAM)
+                .build().also {
+                    try { it.play() } catch (_: Exception) { }
+                }
 
-        running = true
-        thread = Thread({
-            while (running) {
-                val chunk = try {
-                    queue.take()
-                } catch (_: InterruptedException) {
-                    break
+            running = true
+            thread = Thread({
+                while (running) {
+                    val chunk = try {
+                        queue.take()
+                    } catch (_: InterruptedException) {
+                        break
+                    }
+                    if (chunk.isNotEmpty() && running) {
+                        val t = track
+                        if (t != null) {
+                            if (t.playState != AudioTrack.PLAYSTATE_PLAYING) {
+                                try { t.play() } catch (_: Exception) { }
+                            }
+                            t.write(chunk, 0, chunk.size)
+                        }
+                    }
                 }
-                if (chunk.isNotEmpty() && running) {
-                    track?.write(chunk, 0, chunk.size)
-                }
+            }, "desktop-audio-player").apply {
+                isDaemon = true
+                priority = Thread.MAX_PRIORITY
+                start()
             }
-        }, "desktop-audio-player").apply {
-            isDaemon = true
-            priority = Thread.MAX_PRIORITY
-            start()
-        }
+        } catch (_: Exception) { }
     }
 
     @Synchronized
@@ -90,3 +99,4 @@ class DesktopAudioPlayer {
         currentChannels = 0
     }
 }
+

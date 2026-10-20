@@ -108,6 +108,7 @@ class MainActivity : ComponentActivity() {
         plan = PlanSpeech(this)
         finder = Finder(this) { name, host, port -> main.post { addHost(name, host, port) } }
         speaker.start()
+        volumeControlStream = android.media.AudioManager.STREAM_MUSIC
         val prefs = getSharedPreferences("bluey", MODE_PRIVATE)
         ui = ui.copy(
             address = prefs.getString("address", "").orEmpty(),

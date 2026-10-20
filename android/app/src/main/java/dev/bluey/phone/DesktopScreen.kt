@@ -13,8 +13,11 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
@@ -222,7 +225,9 @@ fun DesktopViewScreen(
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
+                        .heightIn(max = 260.dp)
                         .background(Color(0xFF1A1A2E))
+                        .verticalScroll(rememberScrollState())
                         .padding(12.dp),
                 ) {
                     Text("FPS: $localFps", color = Color.White, fontSize = 13.sp)
@@ -312,6 +317,14 @@ fun DesktopViewScreen(
                                 onCheckedChange = { onAudioSettingsChanged(audioEnabled, audioQuality, it) },
                             )
                         }
+                    }
+
+                    Spacer(Modifier.height(12.dp))
+                    Button(
+                        onClick = { showSettings = false },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text("Done", fontSize = 13.sp)
                     }
                 }
             }
