@@ -24,6 +24,7 @@ public sealed class PhoneLink : IDisposable
 
     public int Port { get; private set; }
     public string AddressText { get; private set; } = "";
+    public Action? OnClientsCleared { get; set; }
 
     public void Start()
     {
@@ -111,7 +112,13 @@ public sealed class PhoneLink : IDisposable
 
     private void Drop(Stream stream)
     {
-        lock (_gate) _clients.Remove(stream);
+        bool cleared = false;
+        lock (_gate)
+        {
+            _clients.Remove(stream);
+            if (_clients.Count == 0) cleared = true;
+        }
+        if (cleared) OnClientsCleared?.Invoke();
     }
 
     private static IEnumerable<string> LanAddresses()

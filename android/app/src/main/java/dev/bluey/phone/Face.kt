@@ -84,6 +84,9 @@ data class Ui(
     val deskCropFrame: android.graphics.Bitmap? = null,
     val deskCropRect: androidx.compose.ui.geometry.Rect? = null,
     val deskRememberPassword: Boolean = false,
+    val deskAudioEnabled: Boolean = true,
+    val deskAudioQuality: String = "medium",
+    val deskMutePc: Boolean = false,
 )
 
 private val Berry1 = Color(0xFFA9BCFF)

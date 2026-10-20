@@ -112,7 +112,11 @@ fun DesktopViewScreen(
     quality: Int,
     scale: Float,
     grayscale: Boolean,
+    audioEnabled: Boolean = true,
+    audioQuality: String = "medium",
+    mutePc: Boolean = false,
     onSettingsChanged: (fps: Int, quality: Int, scale: Float, grayscale: Boolean) -> Unit,
+    onAudioSettingsChanged: (enabled: Boolean, quality: String, mutePc: Boolean) -> Unit = { _, _, _ -> },
     onTouch: (action: String, x: Float, y: Float, extra: Map<String, Any>) -> Unit,
     onCropChanged: (cropX: Float, cropY: Float, cropW: Float, cropH: Float) -> Unit = { _, _, _, _ -> },
     onKeyboard: () -> Unit,
@@ -205,6 +209,9 @@ fun DesktopViewScreen(
                     }
 
                     Button(onClick = onToggleOrientation) { Text("🔄", fontSize = 13.sp) }
+                    Button(onClick = { onAudioSettingsChanged(!audioEnabled, audioQuality, mutePc) }) {
+                        Text(if (audioEnabled) "🔊" else "🔇", fontSize = 13.sp)
+                    }
                     Button(onClick = { hideControls = true }) { Text("⛶", fontSize = 13.sp) }
                     Button(onClick = { showKeyboard = !showKeyboard }) { Text("⌨", fontSize = 13.sp) }
                     Button(onClick = { showSettings = !showSettings }) { Text("⚙", fontSize = 13.sp) }
@@ -250,6 +257,61 @@ fun DesktopViewScreen(
                                 onSettingsChanged(localFps, localQuality, localScale, it)
                             },
                         )
+                    }
+
+                    Spacer(Modifier.height(10.dp))
+                    Text("Audio Streaming", color = Color(0xFFA9BCFF), fontSize = 14.sp)
+                    Spacer(Modifier.height(4.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        Text("Stream Sound to Phone", color = Color.White, fontSize = 13.sp)
+                        Switch(
+                            checked = audioEnabled,
+                            onCheckedChange = { onAudioSettingsChanged(it, audioQuality, mutePc) },
+                        )
+                    }
+
+                    if (audioEnabled) {
+                        Spacer(Modifier.height(6.dp))
+                        Text("Sound Quality:", color = Color.White, fontSize = 12.sp)
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                        ) {
+                            val options = listOf("low" to "Low (16k)", "medium" to "Med (24k)", "high" to "High (44k stereo)")
+                            for ((qKey, qLabel) in options) {
+                                val selected = audioQuality == qKey
+                                Button(
+                                    onClick = { onAudioSettingsChanged(audioEnabled, qKey, mutePc) },
+                                    modifier = Modifier.weight(1f),
+                                    colors = androidx.compose.material3.ButtonDefaults.buttonColors(
+                                        containerColor = if (selected) Color(0xFF4254D6) else Color(0xFF2A2A40),
+                                    ),
+                                ) {
+                                    Text(qLabel, fontSize = 10.sp, maxLines = 1)
+                                }
+                            }
+                        }
+
+                        Spacer(Modifier.height(8.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                        ) {
+                            Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
+                                Text("Mute PC Speakers", color = Color.White, fontSize = 13.sp)
+                                Text("Reroutes sound fully to phone", color = Color(0xFFB9B2CC), fontSize = 11.sp)
+                            }
+                            Switch(
+                                checked = mutePc,
+                                onCheckedChange = { onAudioSettingsChanged(audioEnabled, audioQuality, it) },
+                            )
+                        }
                     }
                 }
             }

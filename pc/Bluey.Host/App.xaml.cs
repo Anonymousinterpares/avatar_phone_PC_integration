@@ -19,6 +19,7 @@ public partial class App : System.Windows.Application
     private CharacterSession? _session;
     private SupertonicSpeaker? _speaker;
     private DesktopStreamer? _streamer;
+    private AudioStreamer? _audioStreamer;
 
     protected override void OnStartup(StartupEventArgs e)
     {
@@ -40,6 +41,7 @@ public partial class App : System.Windows.Application
         _session.CaptionChanged += text => _overlay.SetCaption(text);
         _session.PointChanged += point => _overlay.PointAt(point);
         _streamer = new DesktopStreamer();
+        _audioStreamer = new AudioStreamer();
         _phones = new PhoneLink(async (packet, push, token) =>
         {
             switch (packet.Command)
@@ -96,7 +98,57 @@ public partial class App : System.Windows.Application
                 case "deskStop":
                     _streamer!.Stop();
                     _streamer!.UpdateCrop(0, 0, 1.0, 1.0);
+                    _audioStreamer?.Stop();
                     return Packet.Of("deskStopped", null, packet.CallId);
+                case "deskAudioStart":
+                {
+                    var rate = 24000;
+                    var ch = 1;
+                    var mutePc = false;
+                    try
+                    {
+                        using var doc = System.Text.Json.JsonDocument.Parse(packet.Text ?? "{}");
+                        var root = doc.RootElement;
+                        if (root.TryGetProperty("rate", out var r) && r.TryGetInt32(out var rv)) rate = rv;
+                        if (root.TryGetProperty("ch", out var c) && c.TryGetInt32(out var cv)) ch = cv;
+                        if (root.TryGetProperty("mutePc", out var m) && m.ValueKind == System.Text.Json.JsonValueKind.True) mutePc = true;
+                    }
+                    catch { }
+                    _audioStreamer!.Start(push, rate, ch, mutePc);
+                    return Packet.Of("deskAudioStarted", null, packet.CallId);
+                }
+                case "deskAudioSettings":
+                {
+                    var rate = 24000;
+                    var ch = 1;
+                    var mutePc = false;
+                    var enabled = true;
+                    try
+                    {
+                        using var doc = System.Text.Json.JsonDocument.Parse(packet.Text ?? "{}");
+                        var root = doc.RootElement;
+                        if (root.TryGetProperty("enabled", out var en) && en.ValueKind == System.Text.Json.JsonValueKind.False) enabled = false;
+                        if (root.TryGetProperty("rate", out var r) && r.TryGetInt32(out var rv)) rate = rv;
+                        if (root.TryGetProperty("ch", out var c) && c.TryGetInt32(out var cv)) ch = cv;
+                        if (root.TryGetProperty("mutePc", out var m) && m.ValueKind == System.Text.Json.JsonValueKind.True) mutePc = true;
+                    }
+                    catch { }
+                    if (enabled)
+                    {
+                        if (!_audioStreamer!.Running)
+                            _audioStreamer.Start(push, rate, ch, mutePc);
+                        else
+                            _audioStreamer.UpdateSettings(rate, ch, mutePc);
+                    }
+                    else
+                    {
+                        _audioStreamer!.Stop();
+                    }
+                    return null;
+                }
+                case "deskAudioStop":
+                    _audioStreamer?.Stop();
+                    return Packet.Of("deskAudioStopped", null, packet.CallId);
                 case "deskCrop":
                 {
                     try
@@ -201,6 +253,11 @@ public partial class App : System.Windows.Application
                     return await _session!.HandleAsync(packet, push, token);
             }
         });
+        _phones.OnClientsCleared = () =>
+        {
+            _streamer?.Stop();
+            _audioStreamer?.Stop();
+        };
         _phones.Start();
         var hints = new UsageHintsWindow();
         hints.Show();
@@ -217,6 +274,7 @@ public partial class App : System.Windows.Application
 
     protected override void OnExit(ExitEventArgs e)
     {
+        _audioStreamer?.Dispose();
         _streamer?.Dispose();
         _phones?.Dispose();
         _speaker?.Dispose();

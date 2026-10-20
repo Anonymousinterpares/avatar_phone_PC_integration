@@ -25,6 +25,7 @@ class MainActivity : ComponentActivity() {
     private val work = Executors.newCachedThreadPool()
     private val main = Handler(Looper.getMainLooper())
     private val speaker = Speaker()
+    private val deskAudio = DesktopAudioPlayer()
     private lateinit var link: DeskLink
     private lateinit var live: LiveVoice
     private lateinit var plan: PlanSpeech
@@ -139,7 +140,11 @@ class MainActivity : ComponentActivity() {
                         quality = ui.deskQuality,
                         scale = ui.deskScale,
                         grayscale = ui.deskGrayscale,
+                        audioEnabled = ui.deskAudioEnabled,
+                        audioQuality = ui.deskAudioQuality,
+                        mutePc = ui.deskMutePc,
                         onSettingsChanged = { f, q, s, g -> sendDesktopSettings(f, q, s, g) },
+                        onAudioSettingsChanged = { en, q, m -> sendDesktopAudioSettings(en, q, m) },
                         onTouch = { action, x, y, extra -> sendDesktopInput(action, x, y, extra) },
                         onCropChanged = { cx, cy, cw, ch -> sendDesktopCrop(cx, cy, cw, ch) },
                         onKeyboard = { },
@@ -172,6 +177,7 @@ class MainActivity : ComponentActivity() {
         live.close()
         plan.destroy()
         speaker.stop()
+        deskAudio.stop()
         stopMic()
         link.close()
         work.shutdownNow()
@@ -552,6 +558,25 @@ class MainActivity : ComponentActivity() {
                     } catch (_: Exception) { }
                 }
             }
+            "deskAudio" -> {
+                if (ui.deskMode && ui.deskAudioEnabled) {
+                    val audioData = packet.optString("audio", "")
+                    if (audioData.isNotEmpty()) {
+                        try {
+                            val pcm = android.util.Base64.decode(audioData, android.util.Base64.DEFAULT)
+                            val textStr = packet.optString("text", "{}")
+                            var rate = 24000
+                            var ch = 1
+                            try {
+                                val doc = JSONObject(textStr)
+                                rate = doc.optInt("rate", 24000)
+                                ch = doc.optInt("ch", 1)
+                            } catch (_: Exception) { }
+                            deskAudio.play(pcm, rate, ch)
+                        } catch (_: Exception) { }
+                    }
+                }
+            }
         }
     }
 
@@ -559,6 +584,7 @@ class MainActivity : ComponentActivity() {
         live.close()
         plan.cancel()
         stopMic()
+        deskAudio.stop()
         holding = false
         asking = false
         speechFailed = false
@@ -605,6 +631,7 @@ class MainActivity : ComponentActivity() {
                         setImmersiveMode(true)
                         requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
                         requestDesktopStream()
+                        sendDesktopAudioSettings(ui.deskAudioEnabled, ui.deskAudioQuality, ui.deskMutePc)
                     } else {
                         ui = ui.copy(deskMode = true, deskNeedsPassword = true, deskAuthenticated = false)
                     }
@@ -637,6 +664,7 @@ class MainActivity : ComponentActivity() {
                         setImmersiveMode(true)
                         requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
                         requestDesktopStream()
+                        sendDesktopAudioSettings(ui.deskAudioEnabled, ui.deskAudioQuality, ui.deskMutePc)
                     } else {
                         ui = ui.copy(status = "Wrong password.")
                     }
@@ -663,6 +691,10 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun stopDesktop() {
+        deskAudio.stop()
+        work.execute {
+            try { link.request("deskAudioStop", timeoutMs = 3_000) } catch (_: Exception) { }
+        }
         work.execute {
             try { link.request("deskStop", timeoutMs = 5_000) } catch (_: Exception) { }
         }
@@ -676,6 +708,29 @@ class MainActivity : ComponentActivity() {
             deskAuthenticated = false,
             deskNeedsPassword = false,
         )
+    }
+
+    private fun sendDesktopAudioSettings(enabled: Boolean, quality: String, mutePc: Boolean) {
+        ui = ui.copy(deskAudioEnabled = enabled, deskAudioQuality = quality, deskMutePc = mutePc)
+        if (!enabled) {
+            deskAudio.stop()
+        }
+        work.execute {
+            try {
+                val settings = JSONObject()
+                settings.put("enabled", enabled)
+                val rate = when (quality) {
+                    "high" -> 44100
+                    "low" -> 16000
+                    else -> 24000
+                }
+                val ch = if (quality == "high") 2 else 1
+                settings.put("rate", rate)
+                settings.put("ch", ch)
+                settings.put("mutePc", mutePc)
+                link.send("deskAudioSettings", settings.toString())
+            } catch (_: Exception) { }
+        }
     }
 
     private fun sendDesktopCrop(cropX: Float, cropY: Float, cropW: Float, cropH: Float) {
