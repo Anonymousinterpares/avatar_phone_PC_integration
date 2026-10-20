@@ -110,9 +110,15 @@ class MainActivity : ComponentActivity() {
         speaker.start()
         volumeControlStream = android.media.AudioManager.STREAM_MUSIC
         val prefs = getSharedPreferences("bluey", MODE_PRIVATE)
+        val deskAudioEnabled = prefs.getBoolean("desk_audio_enabled", false)
+        val deskAudioQuality = prefs.getString("desk_audio_quality", "medium") ?: "medium"
+        val deskMutePc = prefs.getBoolean("desk_mute_pc", false)
         ui = ui.copy(
             address = prefs.getString("address", "").orEmpty(),
             deskRememberPassword = prefs.getBoolean("desk_remember_password", false),
+            deskAudioEnabled = deskAudioEnabled,
+            deskAudioQuality = deskAudioQuality,
+            deskMutePc = deskMutePc,
         )
         setContent {
             if (ui.deskMode) {
@@ -167,6 +173,7 @@ class MainActivity : ComponentActivity() {
                     onHoldEnd = { holdEnd() },
                     onType = { sendTyped(it) },
                     onDesktop = { startDesktop() },
+                    onAudioSettingsChanged = { en, q, m -> sendDesktopAudioSettings(en, q, m) },
                 )
             }
         }
@@ -237,6 +244,9 @@ class MainActivity : ComponentActivity() {
                 main.post {
                     connecting = false
                     ui = ui.copy(status = "Connected. Double-tap the face to wake him.", address = "$host:$port", awake = false, connected = true)
+                    if (ui.deskAudioEnabled) {
+                        sendDesktopAudioSettings(ui.deskAudioEnabled, ui.deskAudioQuality, ui.deskMutePc)
+                    }
                 }
             } catch (ex: Exception) {
                 main.post {
@@ -560,7 +570,7 @@ class MainActivity : ComponentActivity() {
                 }
             }
             "deskAudio" -> {
-                if (ui.deskMode && ui.deskAudioEnabled) {
+                if (ui.deskAudioEnabled) {
                     val audioData = packet.optString("audio", "")
                     if (audioData.isNotEmpty()) {
                         try {
@@ -692,10 +702,6 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun stopDesktop() {
-        deskAudio.stop()
-        work.execute {
-            try { link.request("deskAudioStop", timeoutMs = 3_000) } catch (_: Exception) { }
-        }
         work.execute {
             try { link.request("deskStop", timeoutMs = 5_000) } catch (_: Exception) { }
         }
@@ -713,9 +719,16 @@ class MainActivity : ComponentActivity() {
 
     private fun sendDesktopAudioSettings(enabled: Boolean, quality: String, mutePc: Boolean) {
         ui = ui.copy(deskAudioEnabled = enabled, deskAudioQuality = quality, deskMutePc = mutePc)
+        val prefs = getSharedPreferences("bluey", MODE_PRIVATE).edit()
+        prefs.putBoolean("desk_audio_enabled", enabled)
+        prefs.putString("desk_audio_quality", quality)
+        prefs.putBoolean("desk_mute_pc", mutePc)
+        prefs.apply()
+
         if (!enabled) {
             deskAudio.stop()
         }
+        if (!link.connected) return
         work.execute {
             try {
                 val settings = JSONObject()

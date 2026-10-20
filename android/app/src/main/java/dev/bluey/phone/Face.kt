@@ -23,6 +23,7 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
 import androidx.compose.runtime.Composable
@@ -108,8 +109,10 @@ fun BlueyScreen(
     onHoldEnd: () -> Unit,
     onType: (String) -> Unit,
     onDesktop: () -> Unit,
+    onAudioSettingsChanged: (enabled: Boolean, quality: String, mutePc: Boolean) -> Unit = { _, _, _ -> },
 ) {
     var typingOpen by remember { mutableStateOf(false) }
+    var soundSettingsOpen by remember { mutableStateOf(false) }
     var draft by remember { mutableStateOf("") }
     val bubble = when {
         ui.caption.isNotEmpty() -> ui.caption
@@ -210,11 +213,88 @@ fun BlueyScreen(
                 Text(host.label)
             }
         }
-        Button(
-            onClick = onDesktop,
+        Row(
             modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            Text("Remote Desktop")
+            Button(
+                onClick = onDesktop,
+                modifier = Modifier.weight(1f),
+            ) {
+                Text("Remote Desktop")
+            }
+            Button(
+                onClick = { soundSettingsOpen = !soundSettingsOpen },
+                modifier = Modifier.weight(1f),
+                colors = androidx.compose.material3.ButtonDefaults.buttonColors(
+                    containerColor = if (ui.deskAudioEnabled) Color(0xFF4254D6) else Color(0xFF2A2A40),
+                ),
+            ) {
+                Text(
+                    when {
+                        ui.deskAudioEnabled && ui.deskMutePc -> "🔊 Muted PC"
+                        ui.deskAudioEnabled -> "🔊 PC Audio"
+                        else -> "🔇 PC Audio"
+                    }
+                )
+            }
+        }
+
+        if (soundSettingsOpen) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(Color(0xFF1E1B2E), RoundedCornerShape(12.dp))
+                    .padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Text("Stream PC Audio to Phone", color = Color.White, fontSize = 14.sp)
+                    Switch(
+                        checked = ui.deskAudioEnabled,
+                        onCheckedChange = { onAudioSettingsChanged(it, ui.deskAudioQuality, ui.deskMutePc) },
+                    )
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
+                        Text("Mute PC Speakers", color = Color.White, fontSize = 14.sp)
+                        Text("Reroutes sound fully to phone", color = Color(0xFFB9B2CC), fontSize = 11.sp)
+                    }
+                    Switch(
+                        checked = ui.deskMutePc,
+                        onCheckedChange = { onAudioSettingsChanged(ui.deskAudioEnabled, ui.deskAudioQuality, it) },
+                    )
+                }
+
+                Text("Sound Quality:", color = Color.White, fontSize = 12.sp)
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    val options = listOf("low" to "Low (16k)", "medium" to "Med (24k)", "high" to "High (44k stereo)")
+                    for ((qKey, qLabel) in options) {
+                        val selected = ui.deskAudioQuality == qKey
+                        Button(
+                            onClick = { onAudioSettingsChanged(ui.deskAudioEnabled, qKey, ui.deskMutePc) },
+                            modifier = Modifier.weight(1f),
+                            colors = androidx.compose.material3.ButtonDefaults.buttonColors(
+                                containerColor = if (selected) Color(0xFF4254D6) else Color(0xFF2A2A40),
+                            ),
+                        ) {
+                            Text(qLabel, fontSize = 10.sp, maxLines = 1)
+                        }
+                    }
+                }
+            }
         }
     }
 }

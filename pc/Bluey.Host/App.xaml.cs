@@ -98,7 +98,6 @@ public partial class App : System.Windows.Application
                 case "deskStop":
                     _streamer!.Stop();
                     _streamer!.UpdateCrop(0, 0, 1.0, 1.0);
-                    _audioStreamer?.Stop();
                     return Packet.Of("deskStopped", null, packet.CallId);
                 case "deskAudioStart":
                 {
