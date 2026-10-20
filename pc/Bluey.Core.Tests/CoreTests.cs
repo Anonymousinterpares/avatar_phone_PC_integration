@@ -1,4 +1,5 @@
 using Xunit;
+using Bluey.Audio;
 using Bluey.Auth;
 using Bluey.Brains;
 using Bluey.Desk;
@@ -29,6 +30,51 @@ public class CoreTests
         Assert.Equal("abc", packets[0].CallId);
         Assert.Equal("awake", packets[1].Command);
         Assert.Equal(0, length);
+    }
+
+    [Fact]
+    public void Enumerate_Audio_Devices()
+    {
+        var devices = AudioDeviceManager.ListPlaybackDevices();
+        foreach (var d in devices)
+        {
+            Console.WriteLine($"[DEVICE] {d.Name} (Default={d.IsDefault}, Virtual={d.IsLikelySilentOrVirtual}) -> {d.Id}");
+        }
+
+        var defaultDevice = devices.FirstOrDefault(d => d.IsDefault);
+        Assert.NotNull(defaultDevice);
+
+        // Ensure LG HDR WFHD is default first if present
+        var lg = devices.FirstOrDefault(d => d.Name.Contains("LG HDR", StringComparison.OrdinalIgnoreCase));
+        if (lg != null && !lg.IsDefault)
+        {
+            AudioDeviceManager.SetDefaultPlaybackDevice(lg.Id);
+            Thread.Sleep(50);
+            devices = AudioDeviceManager.ListPlaybackDevices();
+            defaultDevice = devices.First(d => d.IsDefault);
+        }
+
+        // Test automated reroute device switching
+        bool switched = AudioDeviceManager.SwitchToRerouteDevice(out var originalId);
+        Assert.True(switched);
+        Assert.Equal(defaultDevice.Id, originalId);
+
+        Thread.Sleep(100);
+
+        var devicesAfterSwitch = AudioDeviceManager.ListPlaybackDevices();
+        var newDefault = devicesAfterSwitch.FirstOrDefault(d => d.IsDefault);
+        Assert.NotNull(newDefault);
+        Assert.NotEqual(defaultDevice.Id, newDefault.Id);
+
+        // Restore original
+        bool restored = AudioDeviceManager.RestoreDefaultDevice(originalId);
+        Assert.True(restored);
+
+        Thread.Sleep(100);
+
+        var devicesAfterRestore = AudioDeviceManager.ListPlaybackDevices();
+        var restoredDefault = devicesAfterRestore.FirstOrDefault(d => d.IsDefault);
+        Assert.Equal(defaultDevice.Id, restoredDefault?.Id);
     }
 
     [Fact]

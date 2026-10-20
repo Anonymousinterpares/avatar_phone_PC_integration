@@ -241,7 +241,7 @@ fun BlueyScreen(
             ) {
                 Text(
                     when {
-                        ui.deskAudioEnabled && ui.deskMutePc -> "🔊 Muted PC"
+                        ui.deskAudioEnabled && ui.deskMutePc -> "🔊 Rerouted to Phone"
                         ui.deskAudioEnabled -> "🔊 PC Audio"
                         else -> "🔇 PC Audio"
                     }
@@ -275,8 +275,8 @@ fun BlueyScreen(
                     horizontalArrangement = Arrangement.SpaceBetween,
                 ) {
                     Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
-                        Text("Mute PC Speakers", color = Color.White, fontSize = 14.sp)
-                        Text("Reroutes sound fully to phone", color = Color(0xFFB9B2CC), fontSize = 11.sp)
+                        Text("Reroute PC Sound to Phone", color = Color.White, fontSize = 14.sp)
+                        Text("Silences PC speakers and routes audio to phone", color = Color(0xFFB9B2CC), fontSize = 11.sp)
                     }
                     Switch(
                         checked = ui.deskMutePc,

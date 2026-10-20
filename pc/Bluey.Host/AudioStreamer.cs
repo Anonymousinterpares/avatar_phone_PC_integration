@@ -3,14 +3,16 @@ using System.IO;
 using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
+using Bluey.Audio;
 using Bluey.Protocol;
 
 namespace Bluey.Host;
 
 /// <summary>
 /// Captures PC audio playback via WASAPI Loopback and streams it to the phone.
-/// Supports configurable sample rate, channel count, and optional PC speaker muting
-/// (rerouting audio exclusively to the phone).
+/// Supports configurable sample rate, channel count, and optional PC speaker rerouting
+/// (switching default audio playback device to a virtual/silent endpoint so PC speakers
+/// remain silent while full unattenuated audio streams cleanly to the phone).
 /// </summary>
 public sealed class AudioStreamer : IDisposable
 {
@@ -21,7 +23,7 @@ public sealed class AudioStreamer : IDisposable
     private int _targetRate = 24000;
     private int _targetChannels = 1;
     private bool _mutePc;
-    private float? _originalVolumeScalar;
+    private string? _originalDefaultDeviceId;
 
     public bool Running => _cancel != null;
 
@@ -38,12 +40,19 @@ public sealed class AudioStreamer : IDisposable
         _targetChannels = channels == 2 ? 2 : 1;
         _mutePc = mutePc;
 
+        if (_mutePc && _originalDefaultDeviceId == null)
+        {
+            AudioDeviceManager.SwitchToRerouteDevice(out _originalDefaultDeviceId);
+            Thread.Sleep(60);
+        }
+
         _cancel = new CancellationTokenSource();
         _loop = Task.Run(() => CaptureLoop(_cancel.Token));
     }
 
     public void UpdateSettings(int sampleRate, int channels, bool mutePc)
     {
+        bool rerouteChanged = _mutePc != mutePc;
         _targetRate = sampleRate switch
         {
             <= 16000 => 16000,
@@ -53,7 +62,11 @@ public sealed class AudioStreamer : IDisposable
         _targetChannels = channels == 2 ? 2 : 1;
         _mutePc = mutePc;
 
-        UpdateMuteState(_mutePc);
+        if (rerouteChanged && Running && _send != null)
+        {
+            // Restart capture loop to bind to the newly selected default device
+            Start(_send, _targetRate, _targetChannels, _mutePc);
+        }
     }
 
     public void Stop()
@@ -64,74 +77,14 @@ public sealed class AudioStreamer : IDisposable
         _cancel = null;
         _loop = null;
 
-        RestoreMuteState();
+        if (_originalDefaultDeviceId != null)
+        {
+            AudioDeviceManager.RestoreDefaultDevice(_originalDefaultDeviceId);
+            _originalDefaultDeviceId = null;
+        }
     }
 
     public void Dispose() => Stop();
-
-    private void UpdateMuteState(bool mute)
-    {
-        try
-        {
-            var epv = GetEndpointVolume();
-            if (epv != null)
-            {
-                var dummy = Guid.Empty;
-                if (!_originalVolumeScalar.HasValue)
-                {
-                    epv.GetMasterVolumeLevelScalar(out var currentVol);
-                    _originalVolumeScalar = currentVol;
-                }
-
-                if (mute)
-                {
-                    // Setting master volume scalar to 0 silences physical speakers completely,
-                    // while WASAPI loopback captures the audio stream before endpoint attenuation.
-                    epv.SetMasterVolumeLevelScalar(0.0f, ref dummy);
-                }
-                else if (_originalVolumeScalar.HasValue)
-                {
-                    epv.SetMasterVolumeLevelScalar(_originalVolumeScalar.Value, ref dummy);
-                }
-            }
-        }
-        catch { }
-    }
-
-    private void RestoreMuteState()
-    {
-        if (_originalVolumeScalar.HasValue)
-        {
-            try
-            {
-                var epv = GetEndpointVolume();
-                if (epv != null)
-                {
-                    var dummy = Guid.Empty;
-                    epv.SetMasterVolumeLevelScalar(_originalVolumeScalar.Value, ref dummy);
-                }
-            }
-            catch { }
-            _originalVolumeScalar = null;
-        }
-    }
-
-    private static IAudioEndpointVolume? GetEndpointVolume()
-    {
-        try
-        {
-            var enumerator = (IMMDeviceEnumerator)new MMDeviceEnumeratorComObject();
-            int hr = enumerator.GetDefaultAudioEndpoint(EDataFlow.eRender, ERole.eMultimedia, out var device);
-            if (hr != 0 || device == null) return null;
-
-            var iid = new Guid("5CDF2C82-841E-4546-9722-0CF74078229A");
-            hr = device.Activate(ref iid, 1 /* CLSCTX_INPROC_SERVER */, IntPtr.Zero, out var epvObj);
-            if (hr == 0 && epvObj is IAudioEndpointVolume epv)
-                return epv;
-        }
-        catch { }
-        return null;
-    }
 
     private async Task CaptureLoop(CancellationToken token)
     {
@@ -145,11 +98,6 @@ public sealed class AudioStreamer : IDisposable
             var enumerator = (IMMDeviceEnumerator)new MMDeviceEnumeratorComObject();
             int hr = enumerator.GetDefaultAudioEndpoint(EDataFlow.eRender, ERole.eMultimedia, out device);
             if (hr != 0 || device == null) return;
-
-            if (_mutePc)
-            {
-                UpdateMuteState(true);
-            }
 
             var iidAudioClient = new Guid("1CB9AD4C-DBFA-4c32-B178-C2F568A703B2");
             hr = device.Activate(ref iidAudioClient, 1 /* CLSCTX_INPROC_SERVER */, IntPtr.Zero, out var acObj);
@@ -284,7 +232,6 @@ public sealed class AudioStreamer : IDisposable
             {
                 try { Marshal.FreeCoTaskMem(pMixFormat); } catch { }
             }
-            RestoreMuteState();
         }
     }
 
@@ -469,30 +416,5 @@ public sealed class AudioStreamer : IDisposable
         [PreserveSig] int ReleaseBuffer(uint NumFramesWritten, uint dwFlags);
     }
 
-    [ComImport]
-    [Guid("5CDF2C82-841E-4546-9722-0CF74078229A"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-    private interface IAudioEndpointVolume
-    {
-        [PreserveSig] int RegisterControlChangeNotify(IntPtr pNotify);
-        [PreserveSig] int UnregisterControlChangeNotify(IntPtr pNotify);
-        [PreserveSig] int GetChannelCount(out uint pnChannelCount);
-        [PreserveSig] int SetMasterVolumeLevel(float fLevelDB, [In] ref Guid pguidEventContext);
-        [PreserveSig] int SetMasterVolumeLevelScalar(float fLevel, [In] ref Guid pguidEventContext);
-        [PreserveSig] int GetMasterVolumeLevel(out float pfLevelDB);
-        [PreserveSig] int GetMasterVolumeLevelScalar(out float pfLevel);
-        [PreserveSig] int SetChannelVolumeLevel(uint nChannel, float fLevelDB, [In] ref Guid pguidEventContext);
-        [PreserveSig] int SetChannelVolumeLevelScalar(uint nChannel, float fLevel, [In] ref Guid pguidEventContext);
-        [PreserveSig] int GetChannelVolumeLevel(uint nChannel, out float pfLevelDB);
-        [PreserveSig] int GetChannelVolumeLevelScalar(uint nChannel, out float pfLevel);
-        [PreserveSig] int SetMute([MarshalAs(UnmanagedType.Bool)] bool bMute, [In] ref Guid pguidEventContext);
-        [PreserveSig] int GetMute([MarshalAs(UnmanagedType.Bool)] out bool pbMute);
-        [PreserveSig] int GetVolumeStepInfo(out uint pnStep, out uint pnStepCount);
-        [PreserveSig] int VolumeStepUp([In] ref Guid pguidEventContext);
-        [PreserveSig] int VolumeStepDown([In] ref Guid pguidEventContext);
-        [PreserveSig] int QueryHardwareSupport(out uint pdwHardwareSupportMask);
-        [PreserveSig] int GetVolumeRange(out float pflVolumeMindB, out float pflVolumeMaxdB, out float pflVolumeIncrementdB);
-    }
-
     #endregion
 }
-
