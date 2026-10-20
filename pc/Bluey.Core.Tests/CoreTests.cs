@@ -54,9 +54,10 @@ public class CoreTests
             defaultDevice = devices.First(d => d.IsDefault);
         }
 
-        // Test automated reroute device switching
-        bool switched = AudioDeviceManager.SwitchToRerouteDevice(out var originalId);
+        // Test automated reroute device switching from physical device
+        bool switched = AudioDeviceManager.SwitchToRerouteDevice(out var targetId, out var originalId);
         Assert.True(switched);
+        Assert.NotNull(targetId);
         Assert.Equal(defaultDevice.Id, originalId);
 
         Thread.Sleep(100);
@@ -64,9 +65,21 @@ public class CoreTests
         var devicesAfterSwitch = AudioDeviceManager.ListPlaybackDevices();
         var newDefault = devicesAfterSwitch.FirstOrDefault(d => d.IsDefault);
         Assert.NotNull(newDefault);
-        Assert.NotEqual(defaultDevice.Id, newDefault.Id);
+        Assert.Equal(targetId, newDefault.Id);
+        Assert.True(newDefault.IsLikelySilentOrVirtual);
 
-        // Restore original
+        // Test: What if the app starts or calls SwitchToRerouteDevice when ALREADY on the virtual device?
+        // It must NOT switch away to physical speakers!
+        bool switchedAgain = AudioDeviceManager.SwitchToRerouteDevice(out var targetId2, out var originalId2);
+        Assert.True(switchedAgain);
+        Assert.Equal(targetId, targetId2);
+        Assert.Equal(defaultDevice.Id, originalId2);
+
+        Thread.Sleep(50);
+        var devicesStillVirtual = AudioDeviceManager.ListPlaybackDevices();
+        Assert.Equal(targetId, devicesStillVirtual.FirstOrDefault(d => d.IsDefault)?.Id);
+
+        // Restore original physical device
         bool restored = AudioDeviceManager.RestoreDefaultDevice(originalId);
         Assert.True(restored);
 
@@ -75,6 +88,14 @@ public class CoreTests
         var devicesAfterRestore = AudioDeviceManager.ListPlaybackDevices();
         var restoredDefault = devicesAfterRestore.FirstOrDefault(d => d.IsDefault);
         Assert.Equal(defaultDevice.Id, restoredDefault?.Id);
+
+        // Test EnsurePhysicalDefault restores physical device if left on virtual
+        AudioDeviceManager.SetDefaultPlaybackDevice(targetId);
+        Thread.Sleep(50);
+        AudioDeviceManager.EnsurePhysicalDefault();
+        Thread.Sleep(100);
+        var devicesAfterEnsure = AudioDeviceManager.ListPlaybackDevices();
+        Assert.Equal(defaultDevice.Id, devicesAfterEnsure.FirstOrDefault(d => d.IsDefault)?.Id);
     }
 
     [Fact]

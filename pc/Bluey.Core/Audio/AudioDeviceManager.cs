@@ -108,30 +108,80 @@ public static class AudioDeviceManager
         return devices.FirstOrDefault(d => d.IsDefault)?.Id;
     }
 
-    public static bool SwitchToRerouteDevice(out string? originalDeviceId)
+    /// <summary>
+    /// Gets the primary physical/audible playback device ID (non-virtual).
+    /// </summary>
+    public static string? GetPhysicalDefaultDeviceId()
     {
+        var devices = ListPlaybackDevices();
+        var current = devices.FirstOrDefault(d => d.IsDefault);
+        if (current != null && !current.IsLikelySilentOrVirtual)
+        {
+            return current.Id;
+        }
+
+        var physical = devices.FirstOrDefault(d => !d.IsLikelySilentOrVirtual);
+        return physical?.Id ?? current?.Id;
+    }
+
+    /// <summary>
+    /// Switches the default playback device to a virtual/silent reroute device.
+    /// Provides both the target virtual device ID (for loopback capture) and the original physical device ID (for restore).
+    /// If the current default is already virtual/silent, it maintains that device and identifies the physical restore device.
+    /// </summary>
+    public static bool SwitchToRerouteDevice(out string? targetDeviceId, out string? originalDeviceId)
+    {
+        targetDeviceId = null;
         originalDeviceId = null;
         lock (_lock)
         {
             var devices = ListPlaybackDevices();
+            if (devices.Count == 0) return false;
+
             var currentDefault = devices.FirstOrDefault(d => d.IsDefault);
-            if (currentDefault == null) return false;
+            var physicalDevice = devices.FirstOrDefault(d => !d.IsLikelySilentOrVirtual);
 
-            originalDeviceId = currentDefault.Id;
+            // Determine the original physical device to restore to later
+            originalDeviceId = (!currentDefault?.IsLikelySilentOrVirtual ?? false)
+                ? currentDefault!.Id
+                : (_lastReroutedOriginalDeviceId ?? physicalDevice?.Id ?? currentDefault?.Id);
 
-            // Candidates in priority order:
-            // 1. Silent or virtual devices (Cables, Oculus, Virtual, Null)
-            // 2. Any other active playback device
-            var candidates = devices
-                .Where(d => !d.IsDefault && !string.Equals(d.Id, currentDefault.Id, StringComparison.OrdinalIgnoreCase))
-                .OrderByDescending(d => d.IsLikelySilentOrVirtual ? 2 : 1)
+            // If the current default is ALREADY a virtual/silent device, we are already rerouted!
+            if (currentDefault != null && currentDefault.IsLikelySilentOrVirtual)
+            {
+                targetDeviceId = currentDefault.Id;
+                _lastReroutedOriginalDeviceId = originalDeviceId;
+                return true;
+            }
+
+            // Find all candidate virtual/silent devices that can be set as default
+            var virtualCandidates = devices
+                .Where(d => d.IsLikelySilentOrVirtual && !d.IsDefault)
+                .OrderByDescending(d => d.Name.Contains("Oculus", StringComparison.OrdinalIgnoreCase) ? 10 : 1)
                 .ThenBy(d => d.Name)
                 .ToList();
 
-            foreach (var cand in candidates)
+            foreach (var cand in virtualCandidates)
             {
                 if (SetDefaultPlaybackDeviceInternal(cand.Id))
                 {
+                    targetDeviceId = cand.Id;
+                    _lastReroutedOriginalDeviceId = originalDeviceId;
+                    return true;
+                }
+            }
+
+            // Fallback: If no virtual device succeeded, try any other non-default device
+            var origId = originalDeviceId;
+            var otherCandidates = devices
+                .Where(d => !d.IsDefault && !string.Equals(d.Id, origId, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+
+            foreach (var cand in otherCandidates)
+            {
+                if (SetDefaultPlaybackDeviceInternal(cand.Id))
+                {
+                    targetDeviceId = cand.Id;
                     _lastReroutedOriginalDeviceId = originalDeviceId;
                     return true;
                 }
@@ -143,15 +193,38 @@ public static class AudioDeviceManager
 
     public static bool RestoreDefaultDevice(string? originalDeviceId)
     {
-        if (string.IsNullOrWhiteSpace(originalDeviceId)) return false;
         lock (_lock)
         {
-            bool ok = SetDefaultPlaybackDeviceInternal(originalDeviceId);
-            if (ok && string.Equals(_lastReroutedOriginalDeviceId, originalDeviceId, StringComparison.OrdinalIgnoreCase))
+            var target = originalDeviceId ?? _lastReroutedOriginalDeviceId ?? GetPhysicalDefaultDeviceId();
+            if (string.IsNullOrWhiteSpace(target)) return false;
+
+            bool ok = SetDefaultPlaybackDeviceInternal(target);
+            if (ok)
             {
                 _lastReroutedOriginalDeviceId = null;
             }
             return ok;
+        }
+    }
+
+    /// <summary>
+    /// Ensures that the PC's default playback device is set to a physical speaker/headphones,
+    /// restoring normal PC audio if the PC was previously left in a rerouted virtual state.
+    /// </summary>
+    public static void EnsurePhysicalDefault()
+    {
+        lock (_lock)
+        {
+            var devices = ListPlaybackDevices();
+            var current = devices.FirstOrDefault(d => d.IsDefault);
+            if (current != null && current.IsLikelySilentOrVirtual)
+            {
+                var physical = GetPhysicalDefaultDeviceId();
+                if (!string.IsNullOrEmpty(physical) && physical != current.Id)
+                {
+                    SetDefaultPlaybackDeviceInternal(physical);
+                }
+            }
         }
     }
 

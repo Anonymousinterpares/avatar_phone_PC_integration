@@ -24,6 +24,7 @@ public sealed class AudioStreamer : IDisposable
     private int _targetChannels = 1;
     private bool _mutePc;
     private string? _originalDefaultDeviceId;
+    private string? _currentTargetDeviceId;
 
     public bool Running => _cancel != null;
 
@@ -40,18 +41,24 @@ public sealed class AudioStreamer : IDisposable
         _targetChannels = channels == 2 ? 2 : 1;
         _mutePc = mutePc;
 
-        if (_mutePc && _originalDefaultDeviceId == null)
+        if (_mutePc)
         {
-            AudioDeviceManager.SwitchToRerouteDevice(out _originalDefaultDeviceId);
-            Thread.Sleep(60);
+            AudioDeviceManager.SwitchToRerouteDevice(out _currentTargetDeviceId, out _originalDefaultDeviceId);
+            Thread.Sleep(50);
+        }
+        else
+        {
+            _currentTargetDeviceId = AudioDeviceManager.GetPhysicalDefaultDeviceId();
         }
 
         _cancel = new CancellationTokenSource();
-        _loop = Task.Run(() => CaptureLoop(_cancel.Token));
+        var targetDevice = _currentTargetDeviceId;
+        _loop = Task.Run(() => CaptureLoop(targetDevice, _cancel.Token));
     }
 
-    public void UpdateSettings(int sampleRate, int channels, bool mutePc)
+    public void UpdateSettings(Func<Packet, Task> send, int sampleRate, int channels, bool mutePc)
     {
+        _send = send;
         bool rerouteChanged = _mutePc != mutePc;
         _targetRate = sampleRate switch
         {
@@ -62,10 +69,10 @@ public sealed class AudioStreamer : IDisposable
         _targetChannels = channels == 2 ? 2 : 1;
         _mutePc = mutePc;
 
-        if (rerouteChanged && Running && _send != null)
+        if (rerouteChanged && Running)
         {
-            // Restart capture loop to bind to the newly selected default device
-            Start(_send, _targetRate, _targetChannels, _mutePc);
+            // Reroute state changed: restart capture loop to cleanly bind to the target device
+            Start(send, _targetRate, _targetChannels, _mutePc);
         }
     }
 
@@ -82,11 +89,12 @@ public sealed class AudioStreamer : IDisposable
             AudioDeviceManager.RestoreDefaultDevice(_originalDefaultDeviceId);
             _originalDefaultDeviceId = null;
         }
+        _currentTargetDeviceId = null;
     }
 
     public void Dispose() => Stop();
 
-    private async Task CaptureLoop(CancellationToken token)
+    private async Task CaptureLoop(string? targetDeviceId, CancellationToken token)
     {
         IMMDevice? device = null;
         IAudioClient? audioClient = null;
@@ -96,7 +104,15 @@ public sealed class AudioStreamer : IDisposable
         try
         {
             var enumerator = (IMMDeviceEnumerator)new MMDeviceEnumeratorComObject();
-            int hr = enumerator.GetDefaultAudioEndpoint(EDataFlow.eRender, ERole.eMultimedia, out device);
+            int hr = -1;
+            if (!string.IsNullOrEmpty(targetDeviceId))
+            {
+                hr = enumerator.GetDevice(targetDeviceId, out device);
+            }
+            if (hr != 0 || device == null)
+            {
+                hr = enumerator.GetDefaultAudioEndpoint(EDataFlow.eRender, ERole.eMultimedia, out device);
+            }
             if (hr != 0 || device == null) return;
 
             var iidAudioClient = new Guid("1CB9AD4C-DBFA-4c32-B178-C2F568A703B2");
@@ -211,6 +227,10 @@ public sealed class AudioStreamer : IDisposable
                             Text = $"{{\"rate\":{_targetRate},\"ch\":{_targetChannels}}}",
                         };
                         await _send(packet);
+                    }
+                    else if (chunkBuffer.Length > chunkThresholdBytes * 4)
+                    {
+                        chunkBuffer.SetLength(0);
                     }
 
                     await Task.Delay(20, token);

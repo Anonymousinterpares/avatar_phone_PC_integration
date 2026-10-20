@@ -42,6 +42,7 @@ public partial class App : System.Windows.Application
         _session.PointChanged += point => _overlay.PointAt(point);
         _streamer = new DesktopStreamer();
         _audioStreamer = new AudioStreamer();
+        Bluey.Audio.AudioDeviceManager.EnsurePhysicalDefault();
         _phones = new PhoneLink(async (packet, push, token) =>
         {
             switch (packet.Command)
@@ -137,7 +138,7 @@ public partial class App : System.Windows.Application
                         if (!_audioStreamer!.Running)
                             _audioStreamer.Start(push, rate, ch, mutePc);
                         else
-                            _audioStreamer.UpdateSettings(rate, ch, mutePc);
+                            _audioStreamer.UpdateSettings(push, rate, ch, mutePc);
                     }
                     else
                     {
