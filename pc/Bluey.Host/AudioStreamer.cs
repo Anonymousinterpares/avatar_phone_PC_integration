@@ -103,7 +103,8 @@ public sealed class AudioStreamer : IDisposable
 
         try
         {
-            var enumerator = (IMMDeviceEnumerator)new MMDeviceEnumeratorComObject();
+            var enumType = Type.GetTypeFromCLSID(ClsidMMDeviceEnumerator)!;
+            var enumerator = (IMMDeviceEnumerator)Activator.CreateInstance(enumType)!;
             int hr = -1;
             if (!string.IsNullOrEmpty(targetDeviceId))
             {
@@ -169,7 +170,8 @@ public sealed class AudioStreamer : IDisposable
             }
             catch { }
 
-            audioClient.Start();
+            hr = audioClient.Start();
+            if (hr != 0) return;
 
             var chunkBuffer = new MemoryStream();
             int chunkThresholdBytes = (_targetRate * _targetChannels * 2 * 40) / 1000; // ~40ms chunk
@@ -346,9 +348,7 @@ public sealed class AudioStreamer : IDisposable
 
     #region COM Interop Definitions
 
-    [ComImport]
-    [Guid("BCDE0395-E52F-467C-8E3D-C4579291692E")]
-    private class MMDeviceEnumeratorComObject { }
+    private static readonly Guid ClsidMMDeviceEnumerator = new("BCDE0395-E52F-467C-8E3D-C4579291692E");
 
     private enum EDataFlow { eRender, eCapture, eAll }
     private enum ERole { eConsole, eMultimedia, eCommunications }

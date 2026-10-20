@@ -1,4 +1,5 @@
 using Xunit;
+using System.Runtime.InteropServices;
 using Bluey.Audio;
 using Bluey.Auth;
 using Bluey.Brains;
@@ -96,6 +97,63 @@ public class CoreTests
         Thread.Sleep(100);
         var devicesAfterEnsure = AudioDeviceManager.ListPlaybackDevices();
         Assert.Equal(defaultDevice.Id, devicesAfterEnsure.FirstOrDefault(d => d.IsDefault)?.Id);
+
+        // Test IMMDeviceEnumerator.GetDevice
+        var enumType = Type.GetTypeFromCLSID(new Guid("BCDE0395-E52F-467C-8E3D-C4579291692E"))!;
+        var enumerator = (IMMDeviceEnumeratorTest)Activator.CreateInstance(enumType)!;
+        int hrGet = enumerator.GetDevice(targetId, out var testDevice);
+        Assert.Equal(0, hrGet);
+        Assert.NotNull(testDevice);
+    }
+
+    [ComImport, Guid("A95664D2-9614-4F35-A746-DE8DB63617E6"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    private interface IMMDeviceEnumeratorTest
+    {
+        [PreserveSig] int EnumAudioEndpoints(int dataFlow, uint dwStateMask, out IntPtr ppDevices);
+        [PreserveSig] int GetDefaultAudioEndpoint(int dataFlow, int role, [MarshalAs(UnmanagedType.Interface)] out object ppDevice);
+        [PreserveSig] int GetDevice([MarshalAs(UnmanagedType.LPWStr)] string pwstrId, [MarshalAs(UnmanagedType.Interface)] out object ppDevice);
+    }
+
+    [Fact]
+    public async Task AudioStreamer_Captures_And_Sends_Packets()
+    {
+        using var streamer = new Bluey.Host.AudioStreamer();
+        int packetCount = 0;
+        streamer.Start(packet =>
+        {
+            if (packet.Command == "deskAudio" && !string.IsNullOrEmpty(packet.Audio))
+            {
+                Interlocked.Increment(ref packetCount);
+            }
+            return Task.CompletedTask;
+        }, 24000, 1, mutePc: false);
+
+        await Task.Delay(500);
+        streamer.Stop();
+
+        Console.WriteLine($"[TEST AUDIO STREAMER mutePc=false] Received packets: {packetCount}");
+        Assert.True(packetCount > 0, "AudioStreamer should have produced packets with mutePc=false");
+    }
+
+    [Fact]
+    public async Task AudioStreamer_Captures_And_Sends_Packets_With_Reroute()
+    {
+        using var streamer = new Bluey.Host.AudioStreamer();
+        int packetCount = 0;
+        streamer.Start(packet =>
+        {
+            if (packet.Command == "deskAudio" && !string.IsNullOrEmpty(packet.Audio))
+            {
+                Interlocked.Increment(ref packetCount);
+            }
+            return Task.CompletedTask;
+        }, 24000, 1, mutePc: true);
+
+        await Task.Delay(1500);
+        streamer.Stop();
+
+        Console.WriteLine($"[TEST AUDIO STREAMER mutePc=true] Received packets: {packetCount}");
+        Assert.True(packetCount > 0, "AudioStreamer should have produced packets with mutePc=true");
     }
 
     [Fact]
