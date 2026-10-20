@@ -248,6 +248,26 @@ public partial class App : System.Windows.Application
                     catch { }
                     return null;
                 }
+                case "ttsGetStatus":
+                    return new Packet { Command = "ttsStatus", Text = GetTtsStatusJson(), CallId = packet.CallId };
+                case "ttsTest":
+                    _speaker!.SpeakTest(packet.Text);
+                    return new Packet { Command = "ttsStatus", Text = GetTtsStatusJson(), CallId = packet.CallId };
+                case "ttsToggle":
+                    speech.Current.TextToSpeech = !speech.Current.TextToSpeech;
+                    speech.Save();
+                    if (speech.Current.TextToSpeech) _speaker!.Warmup();
+                    else _speaker!.Stop();
+                    BroadcastTtsStatus();
+                    return new Packet { Command = "ttsStatus", Text = GetTtsStatusJson(), CallId = packet.CallId };
+                case "ttsSet":
+                    if (packet.Text == "true" || packet.Text == "1") speech.Current.TextToSpeech = true;
+                    else if (packet.Text == "false" || packet.Text == "0") speech.Current.TextToSpeech = false;
+                    speech.Save();
+                    if (speech.Current.TextToSpeech) _speaker!.Warmup();
+                    else _speaker!.Stop();
+                    BroadcastTtsStatus();
+                    return new Packet { Command = "ttsStatus", Text = GetTtsStatusJson(), CallId = packet.CallId };
                 default:
                     return await _session!.HandleAsync(packet, push, token);
             }
@@ -262,6 +282,7 @@ public partial class App : System.Windows.Application
         hints.Show();
         hints.SetEnabled(settings.UsageHints);
         _tray = new TrayApp(settings, store, brains, _session, _phones, _overlay, hints, speech, _speaker);
+        _speaker.StatusChanged += _ => BroadcastTtsStatus();
         if (speech.Current.TextToSpeech) _speaker.Warmup();
         var gaze = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(200) };
         gaze.Tick += (_, _) => PumpFace(store);
@@ -325,6 +346,29 @@ public partial class App : System.Windows.Application
             handled = true;
         }
         return IntPtr.Zero;
+    }
+
+    private string GetTtsStatusJson()
+    {
+        if (_speaker == null) return "{}";
+        return System.Text.Json.JsonSerializer.Serialize(new
+        {
+            enabled = _speaker.Enabled,
+            ready = _speaker.IsReady,
+            running = _speaker.IsRunning,
+            status = _speaker.StatusText,
+            error = _speaker.LastError ?? "",
+        });
+    }
+
+    private void BroadcastTtsStatus()
+    {
+        if (_phones == null || _speaker == null) return;
+        _ = _phones.BroadcastAsync(new Packet
+        {
+            Command = "ttsStatus",
+            Text = GetTtsStatusJson(),
+        });
     }
 
     [System.Runtime.InteropServices.DllImport("user32.dll")]

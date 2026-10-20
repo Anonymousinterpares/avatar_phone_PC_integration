@@ -282,6 +282,12 @@ public sealed class CharacterSession
         CaptionChanged?.Invoke(display);
         if (!speak) return display;
         var spoken = SpokenSpan.Extract(text);
+        if (string.IsNullOrWhiteSpace(spoken))
+        {
+            // If the model did not wrap in [[spoken]] marks, fall back to speaking the displayed reply
+            // so speech is never dropped when TTS is enabled.
+            spoken = display;
+        }
         if (string.IsNullOrWhiteSpace(spoken)) _speaker?.Stop();
         else _speaker?.Speak(spoken);
         return display;

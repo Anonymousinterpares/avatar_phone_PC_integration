@@ -25,15 +25,67 @@ public sealed class SupertonicSpeaker : IReplySpeaker, IDisposable
     private string? _lastError;
     private Thread? _worker;
     private System.Windows.Media.MediaPlayer? _player;
+    private System.Media.SoundPlayer? _soundPlayer;
+    private readonly System.Threading.Timer _watchdog;
 
     public event Action<string>? Failed;
+    public event Action<string>? StatusChanged;
 
     public bool Enabled => _speech.Current.TextToSpeech;
+    public bool IsRunning => _process is { HasExited: false };
+    public bool IsReady => _ready && IsRunning;
+    public string? LastError => _lastError;
+
+    public string StatusText =>
+        !_speech.Current.TextToSpeech ? "Disabled" :
+        IsReady ? "Ready (Supertonic 3)" :
+        IsRunning ? "Starting model..." :
+        string.IsNullOrEmpty(_lastError) ? "Stopped" : $"Error: {_lastError}";
 
     public SupertonicSpeaker(SpeechConfigStore speech)
     {
         _speech = speech;
         _script = LocateScript();
+        _watchdog = new System.Threading.Timer(CheckHealth, null, TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(4));
+    }
+
+    private void CheckHealth(object? _)
+    {
+        if (_disposed) return;
+        if (!_speech.Current.TextToSpeech)
+        {
+            if (_process != null) KillProcess();
+            return;
+        }
+
+        bool dead;
+        lock (_gate)
+        {
+            dead = _process == null || _process.HasExited || !_ready || _stdin == null;
+        }
+
+        if (dead)
+        {
+            Warmup();
+        }
+    }
+
+    public void SpeakTest(string? customSentence = null)
+    {
+        var spoken = SpeechText.Prepare(string.IsNullOrWhiteSpace(customSentence)
+            ? "Hello! Supertonic 3 text to speech is working."
+            : customSentence);
+        if (spoken.Length == 0) return;
+        lock (_gate)
+        {
+            if (_disposed) return;
+            _pending = spoken;
+            _sex = _speech.Current.Sex;
+            _lang = _speech.Current.Lang;
+            _generation++;
+            Monitor.Pulse(_gate);
+        }
+        EnsureWorker();
     }
 
     public void Speak(string text)
@@ -84,6 +136,7 @@ public sealed class SupertonicSpeaker : IReplySpeaker, IDisposable
             _generation++;
             Monitor.PulseAll(_gate);
         }
+        _watchdog.Dispose();
         StopPlayer();
         KillProcess();
     }
@@ -196,6 +249,7 @@ public sealed class SupertonicSpeaker : IReplySpeaker, IDisposable
         }
         _ready = true;
         _lastError = null;
+        NotifyStatus();
         return true;
     }
 
@@ -272,16 +326,29 @@ public sealed class SupertonicSpeaker : IReplySpeaker, IDisposable
 
     private void Play(string wav)
     {
-        var app = System.Windows.Application.Current;
-        if (app == null) return;
-        app.Dispatcher.BeginInvoke(new Action(() =>
+        try
         {
-            _player ??= CreatePlayer();
-            _player.Stop();
-            _player.Close();
-            _player.Open(new Uri(wav, UriKind.Absolute));
-            _player.Play();
-        }));
+            lock (_gate)
+            {
+                _soundPlayer?.Stop();
+                _soundPlayer?.Dispose();
+                _soundPlayer = new System.Media.SoundPlayer(wav);
+                _soundPlayer.Play();
+            }
+        }
+        catch (Exception)
+        {
+            var app = System.Windows.Application.Current;
+            if (app == null) return;
+            app.Dispatcher.BeginInvoke(new Action(() =>
+            {
+                _player ??= CreatePlayer();
+                _player.Stop();
+                _player.Close();
+                _player.Open(new Uri(wav, UriKind.Absolute));
+                _player.Play();
+            }));
+        }
     }
 
     private System.Windows.Media.MediaPlayer CreatePlayer()
@@ -293,6 +360,10 @@ public sealed class SupertonicSpeaker : IReplySpeaker, IDisposable
 
     private void StopPlayer()
     {
+        lock (_gate)
+        {
+            try { _soundPlayer?.Stop(); } catch { }
+        }
         var app = System.Windows.Application.Current;
         if (app == null) return;
         app.Dispatcher.BeginInvoke(new Action(() => _player?.Stop()));
@@ -315,6 +386,7 @@ public sealed class SupertonicSpeaker : IReplySpeaker, IDisposable
             // The worker already exited.
         }
         process.Dispose();
+        NotifyStatus();
     }
 
     private void Report(string message)
@@ -322,6 +394,12 @@ public sealed class SupertonicSpeaker : IReplySpeaker, IDisposable
         if (string.IsNullOrWhiteSpace(message) || message == _lastError) return;
         _lastError = message;
         Failed?.Invoke(message);
+        NotifyStatus();
+    }
+
+    private void NotifyStatus()
+    {
+        try { StatusChanged?.Invoke(StatusText); } catch { }
     }
 
     private static string LocateScript()
@@ -371,6 +449,22 @@ public sealed class SupertonicSpeaker : IReplySpeaker, IDisposable
                 // Try the next launcher.
             }
         }
+
+        var localApp = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        var candidates = new[]
+        {
+            Path.Combine(localApp, "Programs", "Python", "Python312", "python.exe"),
+            Path.Combine(localApp, "Programs", "Python", "Python311", "python.exe"),
+            Path.Combine(localApp, "Programs", "Python", "Python310", "python.exe"),
+            @"C:\Python312\python.exe",
+            @"C:\Python311\python.exe",
+            @"C:\Python310\python.exe",
+        };
+        foreach (var candidate in candidates)
+        {
+            if (File.Exists(candidate)) return candidate;
+        }
+
         return null;
     }
 }

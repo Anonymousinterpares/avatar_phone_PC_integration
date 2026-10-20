@@ -21,7 +21,7 @@ public sealed class AudioStreamer : IDisposable
     private int _targetRate = 24000;
     private int _targetChannels = 1;
     private bool _mutePc;
-    private bool? _originalMuteState;
+    private float? _originalVolumeScalar;
 
     public bool Running => _cancel != null;
 
@@ -77,12 +77,22 @@ public sealed class AudioStreamer : IDisposable
             if (epv != null)
             {
                 var dummy = Guid.Empty;
-                if (!_originalMuteState.HasValue)
+                if (!_originalVolumeScalar.HasValue)
                 {
-                    epv.GetMute(out var current);
-                    _originalMuteState = current;
+                    epv.GetMasterVolumeLevelScalar(out var currentVol);
+                    _originalVolumeScalar = currentVol;
                 }
-                epv.SetMute(mute, ref dummy);
+
+                if (mute)
+                {
+                    // Setting master volume scalar to 0 silences physical speakers completely,
+                    // while WASAPI loopback captures the audio stream before endpoint attenuation.
+                    epv.SetMasterVolumeLevelScalar(0.0f, ref dummy);
+                }
+                else if (_originalVolumeScalar.HasValue)
+                {
+                    epv.SetMasterVolumeLevelScalar(_originalVolumeScalar.Value, ref dummy);
+                }
             }
         }
         catch { }
@@ -90,7 +100,7 @@ public sealed class AudioStreamer : IDisposable
 
     private void RestoreMuteState()
     {
-        if (_originalMuteState.HasValue)
+        if (_originalVolumeScalar.HasValue)
         {
             try
             {
@@ -98,11 +108,11 @@ public sealed class AudioStreamer : IDisposable
                 if (epv != null)
                 {
                     var dummy = Guid.Empty;
-                    epv.SetMute(_originalMuteState.Value, ref dummy);
+                    epv.SetMasterVolumeLevelScalar(_originalVolumeScalar.Value, ref dummy);
                 }
             }
             catch { }
-            _originalMuteState = null;
+            _originalVolumeScalar = null;
         }
     }
 

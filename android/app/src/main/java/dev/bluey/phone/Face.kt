@@ -15,12 +15,14 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.Switch
@@ -88,6 +90,11 @@ data class Ui(
     val deskAudioEnabled: Boolean = true,
     val deskAudioQuality: String = "medium",
     val deskMutePc: Boolean = false,
+    val ttsEnabled: Boolean = true,
+    val ttsReady: Boolean = false,
+    val ttsRunning: Boolean = false,
+    val ttsStatus: String = "Checking...",
+    val ttsError: String = "",
 )
 
 private val Berry1 = Color(0xFFA9BCFF)
@@ -110,6 +117,8 @@ fun BlueyScreen(
     onType: (String) -> Unit,
     onDesktop: () -> Unit,
     onAudioSettingsChanged: (enabled: Boolean, quality: String, mutePc: Boolean) -> Unit = { _, _, _ -> },
+    onTestTts: () -> Unit = {},
+    onToggleTts: () -> Unit = {},
 ) {
     var typingOpen by remember { mutableStateOf(false) }
     var soundSettingsOpen by remember { mutableStateOf(false) }
@@ -292,6 +301,61 @@ fun BlueyScreen(
                         ) {
                             Text(qLabel, fontSize = 10.sp, maxLines = 1)
                         }
+                    }
+                }
+
+                Spacer(Modifier.height(4.dp))
+                androidx.compose.material3.HorizontalDivider(color = Color(0xFF3A3850), thickness = 1.dp)
+
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(Color(0xFF141220), RoundedCornerShape(8.dp))
+                        .padding(10.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            val dotColor = when {
+                                !ui.ttsEnabled -> Color(0xFF888899)
+                                ui.ttsReady -> Color(0xFF4CAF50)
+                                ui.ttsRunning -> Color(0xFFFFC107)
+                                else -> Color(0xFFF44336)
+                            }
+                            Box(
+                                modifier = Modifier
+                                    .size(10.dp)
+                                    .background(dotColor, androidx.compose.foundation.shape.CircleShape)
+                            )
+                            Text(
+                                text = "TTS: ${ui.ttsStatus}",
+                                color = Color.White,
+                                fontSize = 12.sp,
+                                fontWeight = androidx.compose.ui.text.font.FontWeight.Medium,
+                            )
+                        }
+                        Switch(
+                            checked = ui.ttsEnabled,
+                            onCheckedChange = { onToggleTts() },
+                        )
+                    }
+
+                    if (ui.ttsError.isNotEmpty()) {
+                        Text("Error: ${ui.ttsError}", color = Color(0xFFFF6B6B), fontSize = 11.sp)
+                    }
+
+                    Button(
+                        onClick = onTestTts,
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = androidx.compose.material3.ButtonDefaults.buttonColors(
+                            containerColor = Color(0xFF3F51B5),
+                        ),
+                    ) {
+                        Text("🗣️ Test TTS Voice (No LLM)", fontSize = 12.sp)
                     }
                 }
             }

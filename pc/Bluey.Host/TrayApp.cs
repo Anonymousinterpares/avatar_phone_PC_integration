@@ -159,6 +159,27 @@ public sealed class TrayApp : IDisposable
         sex.DropDownItems.Add(male);
         sex.DropDownItems.Add(female);
         menu.Items.Add(sex);
+        var ttsHealth = new ToolStripMenuItem("TTS: " + _speaker.StatusText) { Enabled = false };
+        var ttsTest = new ToolStripMenuItem("Test TTS voice (speak sample)", null, (_, _) =>
+        {
+            _speaker.SpeakTest("Testing Supertonic 3 text to speech. Everything is working.");
+        });
+        menu.Items.Add(ttsHealth);
+        menu.Items.Add(ttsTest);
+        _speaker.StatusChanged += status =>
+        {
+            var app = System.Windows.Application.Current;
+            app?.Dispatcher.BeginInvoke(new Action(() =>
+            {
+                ttsHealth.Text = "TTS: " + status;
+            }));
+        };
+        menu.Opening += (_, _) =>
+        {
+            speak.Checked = _speech.Current.TextToSpeech;
+            ttsHealth.Text = "TTS: " + _speaker.StatusText;
+            ttsTest.Enabled = _speaker.IsReady;
+        };
         menu.Items.Add("Send him home", null, (_, _) => _overlay.PointAt(null));
         var hidden = new ToolStripMenuItem("Hide the blueberry") { CheckOnClick = true };
         hidden.CheckedChanged += (_, _) => _overlay.SetUserHidden(hidden.Checked);

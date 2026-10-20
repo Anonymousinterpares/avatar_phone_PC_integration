@@ -150,6 +150,11 @@ class MainActivity : ComponentActivity() {
                         audioEnabled = ui.deskAudioEnabled,
                         audioQuality = ui.deskAudioQuality,
                         mutePc = ui.deskMutePc,
+                        ttsEnabled = ui.ttsEnabled,
+                        ttsReady = ui.ttsReady,
+                        ttsRunning = ui.ttsRunning,
+                        ttsStatus = ui.ttsStatus,
+                        ttsError = ui.ttsError,
                         onSettingsChanged = { f, q, s, g -> sendDesktopSettings(f, q, s, g) },
                         onAudioSettingsChanged = { en, q, m -> sendDesktopAudioSettings(en, q, m) },
                         onTouch = { action, x, y, extra -> sendDesktopInput(action, x, y, extra) },
@@ -157,6 +162,8 @@ class MainActivity : ComponentActivity() {
                         onKeyboard = { },
                         onBack = { stopDesktop() },
                         onToggleOrientation = { toggleOrientation() },
+                        onTestTts = { testTts() },
+                        onToggleTts = { toggleTts() },
                     )
                 }
             } else {
@@ -174,6 +181,8 @@ class MainActivity : ComponentActivity() {
                     onType = { sendTyped(it) },
                     onDesktop = { startDesktop() },
                     onAudioSettingsChanged = { en, q, m -> sendDesktopAudioSettings(en, q, m) },
+                    onTestTts = { testTts() },
+                    onToggleTts = { toggleTts() },
                 )
             }
         }
@@ -247,6 +256,7 @@ class MainActivity : ComponentActivity() {
                     if (ui.deskAudioEnabled) {
                         sendDesktopAudioSettings(ui.deskAudioEnabled, ui.deskAudioQuality, ui.deskMutePc)
                     }
+                    getTtsStatus()
                 }
             } catch (ex: Exception) {
                 main.post {
@@ -588,6 +598,26 @@ class MainActivity : ComponentActivity() {
                     }
                 }
             }
+            "ttsStatus" -> {
+                val textStr = packet.optString("text", "{}")
+                try {
+                    val doc = JSONObject(textStr)
+                    val enabled = doc.optBoolean("enabled", true)
+                    val ready = doc.optBoolean("ready", false)
+                    val running = doc.optBoolean("running", false)
+                    val status = doc.optString("status", if (ready) "Ready" else "Stopped")
+                    val error = doc.optString("error", "")
+                    main.post {
+                        ui = ui.copy(
+                            ttsEnabled = enabled,
+                            ttsReady = ready,
+                            ttsRunning = running,
+                            ttsStatus = status,
+                            ttsError = error,
+                        )
+                    }
+                } catch (_: Exception) { }
+            }
         }
     }
 
@@ -744,6 +774,27 @@ class MainActivity : ComponentActivity() {
                 settings.put("mutePc", mutePc)
                 link.send("deskAudioSettings", settings.toString())
             } catch (_: Exception) { }
+        }
+    }
+
+    private fun getTtsStatus() {
+        if (!link.connected) return
+        work.execute {
+            try { link.send("ttsGetStatus", "") } catch (_: Exception) { }
+        }
+    }
+
+    private fun testTts() {
+        if (!link.connected) return
+        work.execute {
+            try { link.send("ttsTest", "Testing Supertonic 3 text to speech. Bluey audio is working.") } catch (_: Exception) { }
+        }
+    }
+
+    private fun toggleTts() {
+        if (!link.connected) return
+        work.execute {
+            try { link.send("ttsToggle", "") } catch (_: Exception) { }
         }
     }
 

@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -118,6 +119,11 @@ fun DesktopViewScreen(
     audioEnabled: Boolean = true,
     audioQuality: String = "medium",
     mutePc: Boolean = false,
+    ttsEnabled: Boolean = true,
+    ttsReady: Boolean = false,
+    ttsRunning: Boolean = false,
+    ttsStatus: String = "Checking...",
+    ttsError: String = "",
     onSettingsChanged: (fps: Int, quality: Int, scale: Float, grayscale: Boolean) -> Unit,
     onAudioSettingsChanged: (enabled: Boolean, quality: String, mutePc: Boolean) -> Unit = { _, _, _ -> },
     onTouch: (action: String, x: Float, y: Float, extra: Map<String, Any>) -> Unit,
@@ -125,6 +131,8 @@ fun DesktopViewScreen(
     onKeyboard: () -> Unit,
     onBack: () -> Unit,
     onToggleOrientation: () -> Unit,
+    onTestTts: () -> Unit = {},
+    onToggleTts: () -> Unit = {},
 ) {
     var showSettings by remember { mutableStateOf(false) }
     var hideControls by remember { mutableStateOf(false) }
@@ -317,6 +325,55 @@ fun DesktopViewScreen(
                                 onCheckedChange = { onAudioSettingsChanged(audioEnabled, audioQuality, it) },
                             )
                         }
+                    }
+
+                    Spacer(Modifier.height(8.dp))
+                    androidx.compose.material3.HorizontalDivider(color = Color(0xFF3A3850), thickness = 1.dp)
+                    Spacer(Modifier.height(8.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            val dotColor = when {
+                                !ttsEnabled -> Color(0xFF888899)
+                                ttsReady -> Color(0xFF4CAF50)
+                                ttsRunning -> Color(0xFFFFC107)
+                                else -> Color(0xFFF44336)
+                            }
+                            Box(
+                                modifier = Modifier
+                                    .size(10.dp)
+                                    .background(dotColor, androidx.compose.foundation.shape.CircleShape)
+                            )
+                            Text(
+                                text = "TTS: $ttsStatus",
+                                color = Color.White,
+                                fontSize = 12.sp,
+                                fontWeight = androidx.compose.ui.text.font.FontWeight.Medium,
+                            )
+                        }
+                        Switch(
+                            checked = ttsEnabled,
+                            onCheckedChange = { onToggleTts() },
+                        )
+                    }
+
+                    if (ttsError.isNotEmpty()) {
+                        Text("Error: $ttsError", color = Color(0xFFFF6B6B), fontSize = 11.sp)
+                    }
+
+                    Spacer(Modifier.height(4.dp))
+                    Button(
+                        onClick = onTestTts,
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = androidx.compose.material3.ButtonDefaults.buttonColors(
+                            containerColor = Color(0xFF3F51B5),
+                        ),
+                    ) {
+                        Text("🗣️ Test TTS Voice (No LLM)", fontSize = 12.sp)
                     }
 
                     Spacer(Modifier.height(12.dp))
