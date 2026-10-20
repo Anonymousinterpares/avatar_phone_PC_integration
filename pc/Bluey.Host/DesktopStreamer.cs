@@ -106,6 +106,9 @@ public sealed class DesktopStreamer : IDisposable
                 int effectiveQuality = _quality;
                 double sendCropX = 0, sendCropY = 0, sendCropW = 1.0, sendCropH = 1.0;
 
+                bool superRes = false;
+                double superResUpscale = 1.0;
+
                 if (_zoomActive && (_cropW < 0.98 || _cropH < 0.98))
                 {
                     sendCropX = _cropX;
@@ -121,7 +124,14 @@ public sealed class DesktopStreamer : IDisposable
 
                     _zoomQualityRamp = Math.Min(40, _zoomQualityRamp + 5);
                     effectiveQuality = Math.Min(95, _quality + _zoomQualityRamp);
-                    effectiveScale = Math.Min(1.0, Math.Max(_scale, 1.0 / Math.Max(0.2, sendCropW)));
+
+                    // For zoomed regions, upscale to send more pixel data than the
+                    // native screen has, enhanced with sharpening for text legibility.
+                    // The upscale factor is the inverse of the crop fraction, capped at 3x.
+                    var zoomFactor = 1.0 / Math.Max(0.2, Math.Min(sendCropW, sendCropH));
+                    superResUpscale = Math.Clamp(zoomFactor, 1.2, 3.0);
+                    superRes = true;
+                    effectiveScale = 1.0; // capture at native, upscale later
                 }
                 else
                 {
@@ -155,22 +165,71 @@ public sealed class DesktopStreamer : IDisposable
                     catch { }
                 }
 
-                using var scaled = new Bitmap(bitmap, w, h);
+                Bitmap frameToProcess;
+                if (superRes && superResUpscale > 1.1)
+                {
+                    // Super-resolution: upscale the captured native pixels using
+                    // high-quality bicubic interpolation, then sharpen to enhance
+                    // text edges and fine detail.
+                    var srW = Math.Max(1, (int)(captureRect.Width * superResUpscale));
+                    var srH = Math.Max(1, (int)(captureRect.Height * superResUpscale));
+                    // Clamp to a reasonable max to avoid excessive memory / bandwidth
+                    srW = Math.Min(srW, 3840);
+                    srH = Math.Min(srH, 2160);
+
+                    var upscaled = new Bitmap(srW, srH, PixelFormat.Format32bppArgb);
+                    using (var g = Graphics.FromImage(upscaled))
+                    {
+                        g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
+                        g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.HighQuality;
+                        g.PixelOffsetMode = System.Drawing.Drawing2D.PixelOffsetMode.HighQuality;
+                        g.CompositingQuality = System.Drawing.Drawing2D.CompositingQuality.HighQuality;
+                        g.DrawImage(bitmap, 0, 0, srW, srH);
+                    }
+                    bitmap.Dispose();
+
+                    // Apply unsharp mask for text sharpening
+                    UnsharpMask(upscaled, 1.5f, 0.6f);
+
+                    frameToProcess = upscaled;
+                    w = srW;
+                    h = srH;
+                }
+                else
+                {
+                    if (w != captureRect.Width || h != captureRect.Height)
+                    {
+                        var scaled = new Bitmap(w, h, PixelFormat.Format32bppArgb);
+                        using (var g = Graphics.FromImage(scaled))
+                        {
+                            g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
+                            g.DrawImage(bitmap, 0, 0, w, h);
+                        }
+                        bitmap.Dispose();
+                        frameToProcess = scaled;
+                    }
+                    else
+                    {
+                        frameToProcess = bitmap;
+                    }
+                }
+
                 Bitmap toEncode;
                 Bitmap? gray = null;
 
                 if (_grayscale)
                 {
-                    gray = MakeGrayscale(scaled);
+                    gray = MakeGrayscale(frameToProcess);
                     toEncode = gray;
                 }
                 else
                 {
-                    toEncode = scaled;
+                    toEncode = frameToProcess;
                 }
 
                 var jpeg = CompressJpeg(toEncode, effectiveQuality);
                 gray?.Dispose();
+                frameToProcess.Dispose();
 
                 var base64 = Convert.ToBase64String(jpeg);
                 var inv = System.Globalization.CultureInfo.InvariantCulture;
@@ -194,6 +253,107 @@ public sealed class DesktopStreamer : IDisposable
             var delay = Math.Max(5, (int)(targetDelay - elapsed));
             try { await Task.Delay(delay, token); }
             catch (OperationCanceledException) { break; }
+        }
+    }
+
+    /// <summary>
+    /// Applies an unsharp mask to enhance edges and text legibility.
+    /// Uses a two-pass box blur as a fast Gaussian approximation, then
+    /// sharpens by amplifying the difference between original and blurred.
+    /// </summary>
+    /// <param name="bmp">Bitmap to sharpen in-place.</param>
+    /// <param name="radius">Blur radius (pixels). 1-3 works well for text.</param>
+    /// <param name="amount">Sharpening strength. 0.3-1.0 typical; higher = crisper edges.</param>
+    private static unsafe void UnsharpMask(Bitmap bmp, float radius, float amount)
+    {
+        var w = bmp.Width;
+        var h = bmp.Height;
+        if (w < 3 || h < 3) return;
+
+        var rect = new Rectangle(0, 0, w, h);
+        var data = bmp.LockBits(rect, ImageLockMode.ReadWrite, PixelFormat.Format32bppArgb);
+        try
+        {
+            var stride = data.Stride;
+            var scan0 = (byte*)data.Scan0;
+
+            // Copy original pixel data
+            var byteCount = stride * h;
+            var original = new byte[byteCount];
+            Marshal.Copy(data.Scan0, original, 0, byteCount);
+
+            // Create blurred copy using a fast box blur (two passes for better approximation)
+            var blurred = new byte[byteCount];
+            Array.Copy(original, blurred, byteCount);
+            var r = Math.Max(1, (int)radius);
+
+            // Horizontal pass
+            var temp = new byte[byteCount];
+            for (var y = 0; y < h; y++)
+            {
+                var rowOff = y * stride;
+                for (var x = 0; x < w; x++)
+                {
+                    int sumR = 0, sumG = 0, sumB = 0, count = 0;
+                    for (var dx = -r; dx <= r; dx++)
+                    {
+                        var sx = x + dx;
+                        if (sx < 0 || sx >= w) continue;
+                        var off = rowOff + sx * 4;
+                        sumB += blurred[off];
+                        sumG += blurred[off + 1];
+                        sumR += blurred[off + 2];
+                        count++;
+                    }
+                    var pOff = rowOff + x * 4;
+                    temp[pOff] = (byte)(sumB / count);
+                    temp[pOff + 1] = (byte)(sumG / count);
+                    temp[pOff + 2] = (byte)(sumR / count);
+                    temp[pOff + 3] = blurred[pOff + 3];
+                }
+            }
+
+            // Vertical pass
+            for (var y = 0; y < h; y++)
+            {
+                for (var x = 0; x < w; x++)
+                {
+                    int sumR = 0, sumG = 0, sumB = 0, count = 0;
+                    for (var dy = -r; dy <= r; dy++)
+                    {
+                        var sy = y + dy;
+                        if (sy < 0 || sy >= h) continue;
+                        var off = sy * stride + x * 4;
+                        sumB += temp[off];
+                        sumG += temp[off + 1];
+                        sumR += temp[off + 2];
+                        count++;
+                    }
+                    var pOff = y * stride + x * 4;
+                    blurred[pOff] = (byte)(sumB / count);
+                    blurred[pOff + 1] = (byte)(sumG / count);
+                    blurred[pOff + 2] = (byte)(sumR / count);
+                    blurred[pOff + 3] = temp[pOff + 3];
+                }
+            }
+
+            // Apply: result = original + amount * (original - blurred)
+            for (var i = 0; i < byteCount; i += 4)
+            {
+                for (var c = 0; c < 3; c++)
+                {
+                    var orig = original[i + c];
+                    var blur = blurred[i + c];
+                    var diff = orig - blur;
+                    var sharpened = orig + (int)(diff * amount);
+                    scan0[i + c] = (byte)Math.Clamp(sharpened, 0, 255);
+                }
+                scan0[i + 3] = original[i + 3]; // preserve alpha
+            }
+        }
+        finally
+        {
+            bmp.UnlockBits(data);
         }
     }
 
