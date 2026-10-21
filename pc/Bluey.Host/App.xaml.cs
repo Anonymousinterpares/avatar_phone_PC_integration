@@ -65,10 +65,24 @@ public partial class App : System.Windows.Application
                 }
                 case "deskHelp":
                 {
-                    var joined = _help.TryJoin(PhoneLink.CurrentClientId, packet.Text ?? "");
+                    var helperId = PhoneLink.CurrentClientId;
+                    var attempt = packet.Text ?? "";
+                    var joined = attempt.StartsWith("resume:", StringComparison.OrdinalIgnoreCase)
+                        ? _help.TryResume(helperId, attempt["resume:".Length..])
+                        : _help.TryJoin(helperId, attempt);
                     if (joined == HelpJoin.Ok)
                     {
-                        _ = Dispatcher.BeginInvoke(new Action(() => HelpWindowFor().ShowWatching()));
+                        var controlling = _help.CanControl(helperId);
+                        var resumeToken = _help.ResumeToken(helperId);
+                        _ = Dispatcher.BeginInvoke(new Action(() =>
+                        {
+                            if (controlling) HelpWindowFor().ShowControlling();
+                            else HelpWindowFor().ShowWatching();
+                        }));
+                        if (!string.IsNullOrEmpty(resumeToken) && _phones != null)
+                            _ = _phones.SendToAsync(helperId, Packet.Of("deskHelpState", "resume:" + resumeToken));
+                        if (controlling && _phones != null)
+                            _ = _phones.SendToAsync(helperId, Packet.Of("deskHelpState", "control"));
                         return Packet.Of("deskHelp", "ok", packet.CallId);
                     }
                     var text = joined switch
@@ -335,15 +349,15 @@ public partial class App : System.Windows.Application
         };
         _phones.OnClientClosed = clientId =>
         {
-            if (!_help.Remove(clientId)) return;
+            if (!_help.Park(clientId)) return;
             _helpSpeaker.Reset();
-            _ = Dispatcher.BeginInvoke(new Action(() => _helpWindow?.ShowDisconnected()));
+            _ = Dispatcher.BeginInvoke(new Action(() => _helpWindow?.ShowDisconnected(canReconnect: true)));
         };
         _phones.Start();
         var hints = new UsageHintsWindow();
         hints.Show();
         hints.SetEnabled(settings.UsageHints);
-        _tray = new TrayApp(settings, store, brains, _session, _phones, _overlay, hints, speech, _speaker, ShowHelpCode);
+        _tray = new TrayApp(settings, store, brains, _session, _phones, _overlay, hints, speech, _speaker, ShowHelpCode, ShowRemoteHelp);
         var helpSweep = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
         helpSweep.Tick += (_, _) => SweepHelpControl();
         helpSweep.Start();
@@ -431,6 +445,16 @@ public partial class App : System.Windows.Application
         return _helpWindow;
     }
 
+    private RemoteHelpWindow? _remoteHelp;
+
+    private void ShowRemoteHelp()
+    {
+        if (_remoteHelp == null || _remoteHelp.IsDisposed)
+            _remoteHelp = new RemoteHelpWindow();
+        if (!_remoteHelp.Visible) _remoteHelp.Show();
+        _remoteHelp.Activate();
+    }
+
     private void ShowHelpCode()
     {
         var previous = _help.KickHelper();
@@ -488,6 +512,7 @@ public partial class App : System.Windows.Application
 
     private void SweepHelpControl()
     {
+        _help.ExpirePark();
         var helper = _help.ExpireControl();
         if (helper == null || _phones == null) return;
         _ = _phones.SendToAsync(helper, Packet.Of("deskHelpState", "watch"));

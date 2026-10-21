@@ -30,8 +30,9 @@ public sealed class TrayApp : IDisposable
     private readonly ToolStripMenuItem _modeItem;
 
     private readonly Action _allowHelp;
+    private readonly Action _helpSomeone;
 
-    public TrayApp(AppSettings settings, SettingsStore store, BrainClient brains, CharacterSession session, PhoneLink phones, CursorOverlay overlay, UsageHintsWindow hints, SpeechConfigStore speech, SupertonicSpeaker speaker, Action allowHelp)
+    public TrayApp(AppSettings settings, SettingsStore store, BrainClient brains, CharacterSession session, PhoneLink phones, CursorOverlay overlay, UsageHintsWindow hints, SpeechConfigStore speech, SupertonicSpeaker speaker, Action allowHelp, Action helpSomeone)
     {
         _settings = settings;
         _store = store;
@@ -43,6 +44,7 @@ public sealed class TrayApp : IDisposable
         _speech = speech;
         _speaker = speaker;
         _allowHelp = allowHelp;
+        _helpSomeone = helpSomeone;
         _modeItem = new ToolStripMenuItem("Mode") { Enabled = false };
         _iconImage = BlueberryIcon();
         _icon = new NotifyIcon
@@ -195,6 +197,7 @@ public sealed class TrayApp : IDisposable
         menu.Items.Add("Hand the ask to Claude Code", null, async (_, _) => await HandoffAsync("claude"));
         menu.Items.Add("Hand the ask to Cursor", null, async (_, _) => await HandoffAsync("cursor"));
         menu.Items.Add("Allow help…", null, (_, _) => _allowHelp());
+        menu.Items.Add("Help another computer…", null, (_, _) => _helpSomeone());
         menu.Items.Add("Set desktop password…", null, (_, _) =>
         {
             var current = _store.Load().DesktopPassword;

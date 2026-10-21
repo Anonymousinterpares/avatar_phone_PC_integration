@@ -10,17 +10,21 @@ public sealed class HelpSession
 {
     public static readonly TimeSpan CodeLifetime = TimeSpan.FromMinutes(10);
     public static readonly TimeSpan ControlLifetime = TimeSpan.FromMinutes(10);
+    public static readonly TimeSpan ResumeLifetime = TimeSpan.FromMinutes(2);
     private const string Alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 
     private readonly object _gate = new();
     private readonly Dictionary<string, Seat> _seats = new();
     private string? _code;
     private DateTime _codeUntil;
+    private Seat? _parked;
+    private DateTime _parkedUntil;
 
     public string StartCode()
     {
         lock (_gate)
         {
+            _parked = null;
             _code = NewCode();
             _codeUntil = DateTime.UtcNow.Add(CodeLifetime);
             return _code;
@@ -46,13 +50,36 @@ public sealed class HelpSession
             }
             if (!string.Equals(_code, attempt.Trim(), StringComparison.OrdinalIgnoreCase)) return HelpJoin.Fail;
             _code = null;
+            _parked = null;
             var seat = SeatFor(clientId);
             seat.Owner = false;
             seat.Helper = true;
             seat.Control = false;
             seat.Asking = false;
+            seat.Token = NewToken();
             return HelpJoin.Ok;
         }
+    }
+
+    public HelpJoin TryResume(string clientId, string token)
+    {
+        if (string.IsNullOrWhiteSpace(clientId) || string.IsNullOrWhiteSpace(token)) return HelpJoin.Fail;
+        lock (_gate)
+        {
+            if (_parked == null || DateTime.UtcNow > _parkedUntil || !string.Equals(_parked.Token, token.Trim(), StringComparison.OrdinalIgnoreCase))
+                return HelpJoin.Fail;
+            if (HelperIdLocked() != null) return HelpJoin.Busy;
+            _parked.Asking = false;
+            _seats[clientId] = _parked;
+            _parked = null;
+            return HelpJoin.Ok;
+        }
+    }
+
+    public string? ResumeToken(string clientId)
+    {
+        lock (_gate)
+            return _seats.TryGetValue(clientId, out var seat) && seat.Helper ? seat.Token : null;
     }
 
     public void MarkOwner(string clientId)
@@ -151,21 +178,50 @@ public sealed class HelpSession
     {
         lock (_gate)
         {
+            _parked = null;
             var id = HelperIdLocked();
             if (id != null) _seats.Remove(id);
             return id;
         }
     }
 
-    /// <summary>Drops any seat. Returns true when the disconnected client was the helper.</summary>
+    /// <summary>Drops any seat for good. Returns true when that client was the helper.</summary>
     public bool Remove(string clientId)
     {
         lock (_gate)
         {
             if (!_seats.TryGetValue(clientId, out var seat)) return false;
-            var helper = seat.Helper;
             _seats.Remove(clientId);
-            return helper;
+            if (seat.Helper) _parked = null;
+            return seat.Helper;
+        }
+    }
+
+    /// <summary>
+    /// A dropped helper can reconnect with their token for two minutes.
+    /// Returns true when the closed client was the helper.
+    /// </summary>
+    public bool Park(string clientId)
+    {
+        lock (_gate)
+        {
+            if (!_seats.TryGetValue(clientId, out var seat)) return false;
+            _seats.Remove(clientId);
+            if (!seat.Helper) return false;
+            seat.Asking = false;
+            _parked = seat;
+            _parkedUntil = DateTime.UtcNow.Add(ResumeLifetime);
+            return true;
+        }
+    }
+
+    public bool ExpirePark()
+    {
+        lock (_gate)
+        {
+            if (_parked == null || DateTime.UtcNow <= _parkedUntil) return false;
+            _parked = null;
+            return true;
         }
     }
 
@@ -197,6 +253,13 @@ public sealed class HelpSession
         return new string(chars);
     }
 
+    private static string NewToken()
+    {
+        var bytes = new byte[16];
+        RandomNumberGenerator.Fill(bytes);
+        return Convert.ToHexString(bytes);
+    }
+
     private sealed class Seat
     {
         public bool Owner;
@@ -204,6 +267,7 @@ public sealed class HelpSession
         public bool Control;
         public bool Asking;
         public DateTime ControlUntil;
+        public string Token = "";
     }
 }
 

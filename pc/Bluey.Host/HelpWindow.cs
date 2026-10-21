@@ -87,9 +87,11 @@ public sealed class HelpWindow : Form
         Activate();
     }
 
-    public void ShowDisconnected()
+    public void ShowDisconnected(bool canReconnect = false)
     {
-        _body.Text = "The helper disconnected.";
+        _body.Text = canReconnect
+            ? "The helper disconnected. They can reconnect for 2 minutes without a new code."
+            : "The helper left.";
         _code.Visible = false;
         _hotkey.Visible = false;
         _mouse.Visible = false;
