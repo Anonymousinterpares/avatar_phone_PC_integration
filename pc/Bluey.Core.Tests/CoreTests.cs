@@ -450,6 +450,19 @@ public class CoreTests
     }
 
     [Fact]
+    public void Web_search_follows_chat_until_the_user_pins_a_provider()
+    {
+        var path = Path.Combine(Path.GetTempPath(), "bluey-search-" + Guid.NewGuid().ToString("N") + ".json");
+        Assert.Equal(BrainMode.OpenRouter, WebSearchPreference.Resolve(BrainMode.OpenRouter, path));
+        WebSearchPreference.Save(true, BrainMode.XaiLive, path);
+        Assert.True(WebSearchPreference.IsPinned(path));
+        Assert.Equal(BrainMode.XaiLive, WebSearchPreference.Resolve(BrainMode.OpenRouter, path));
+        WebSearchPreference.Save(false, BrainMode.OpenAiLive, path);
+        Assert.Equal(BrainMode.Cerebras, WebSearchPreference.Resolve(BrainMode.Cerebras, path));
+        File.Delete(path);
+    }
+
+    [Fact]
     public void Speech_config_round_trips_and_normalizes_sex()
     {
         var root = Path.Combine(Path.GetTempPath(), "bluey-speech-" + Guid.NewGuid().ToString("N"));

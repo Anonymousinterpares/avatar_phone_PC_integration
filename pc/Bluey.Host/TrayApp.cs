@@ -413,6 +413,9 @@ public sealed class SettingsForm : Form
     private readonly TextBox _openRouter = new() { Width = 280, UseSystemPasswordChar = true };
     private readonly ComboBox _model = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 280, DropDownWidth = 340 };
     private readonly ComboBox _route = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 280 };
+    private readonly ComboBox _search = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 280 };
+    private bool _searchSync;
+    private bool _searchTouched;
     private readonly TextBox _ask = new() { Width = 280 };
 
     public string AskText => _ask.Text;
@@ -424,11 +427,13 @@ public sealed class SettingsForm : Form
         StartPosition = FormStartPosition.CenterScreen;
         MinimizeBox = false;
         MaximizeBox = false;
-        ClientSize = new System.Drawing.Size(460, focusAsk ? 600 : 540);
+        ClientSize = new System.Drawing.Size(460, focusAsk ? 640 : 580);
         var layout = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(12), ColumnCount = 2, AutoSize = true };
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 140));
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        _mode.Items.AddRange(new object[] { "Grok live (xAI API key)", "OpenAI live (API key)", "ChatGPT plan", "Claude API key", "Cerebras (qwen-3.8-27b)", "OpenRouter" });
+        var providers = new object[] { "Grok live (xAI API key)", "OpenAI live (API key)", "ChatGPT plan", "Claude API key", "Cerebras (qwen-3.8-27b)", "OpenRouter" };
+        _mode.Items.AddRange(providers);
+        _search.Items.AddRange(providers);
         _mode.SelectedIndex = settings.Mode switch
         {
             BrainMode.OpenAiLive => 1,
@@ -457,9 +462,24 @@ public sealed class SettingsForm : Form
             if (OpenRouterProviders.Choices[i].Slug == selectedRoute) _route.SelectedIndex = i;
         }
         if (_route.SelectedIndex < 0) _route.SelectedIndex = 0;
+        _searchTouched = WebSearchPreference.IsPinned();
+        _search.SelectedIndex = WebSearchPreference.Index(_searchTouched ? WebSearchPreference.Resolve(settings.Mode) : settings.Mode);
         _model.SelectedIndexChanged += (_, _) => UpdateProviderLock();
+        _mode.SelectedIndexChanged += (_, _) =>
+        {
+            UpdateProviderLock();
+            if (_searchTouched) return;
+            _searchSync = true;
+            _search.SelectedIndex = _mode.SelectedIndex;
+            _searchSync = false;
+        };
+        _search.SelectedIndexChanged += (_, _) =>
+        {
+            if (!_searchSync) _searchTouched = true;
+        };
         UpdateProviderLock();
         Add(layout, "Mode", _mode);
+        Add(layout, "Web search", _search);
         Add(layout, "xAI API key", _xai);
         Add(layout, "OpenAI API key", _openai);
         Add(layout, "Anthropic API key", _anthropic);
@@ -503,6 +523,8 @@ public sealed class SettingsForm : Form
             settings.OpenAiApiKey = _openai.Text.Trim();
             settings.AnthropicApiKey = _anthropic.Text.Trim();
             settings.CerebrasApiKey = _cerebras.Text.Trim();
+            var search = WebSearchPreference.FromIndex(_search.SelectedIndex);
+            WebSearchPreference.Save(_searchTouched, search);
         };
     }
 

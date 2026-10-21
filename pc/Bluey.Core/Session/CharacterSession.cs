@@ -36,6 +36,15 @@ public sealed class CharacterSession
     public DateTimeOffset StoppedUntil { get; private set; }
     public event Action<string?>? CaptionChanged;
     public event Action<PointD?>? PointChanged;
+    public event Action<bool>? ActivityChanged;
+    private int _busy;
+
+    private void Busy(bool on)
+    {
+        _busy += on ? 1 : -1;
+        if (_busy < 0) _busy = 0;
+        ActivityChanged?.Invoke(_busy > 0);
+    }
 
     public void ShowCaption(string? text) => Present(text, speak: true);
 
@@ -112,7 +121,16 @@ public sealed class CharacterSession
                     return new Packet { Command = "realtimeToken", CallId = packet.CallId, Text = JsonSerializer.Serialize(new { error = ex.Message }) };
                 }
             case "tool":
-                var run = await RunToolAsync(packet.Tool ?? "", packet.Text ?? "{}", cancellationToken);
+                Busy(true);
+                ToolRun run;
+                try
+                {
+                    run = await RunToolAsync(packet.Tool ?? "", packet.Text ?? "{}", cancellationToken);
+                }
+                finally
+                {
+                    Busy(false);
+                }
                 if (run.GoToSleep)
                 {
                     Awake = false;
@@ -180,6 +198,7 @@ public sealed class CharacterSession
                 _history[i] = LookMemory.Expire(_history[i], now);
             history = _history.ToList();
         }
+        Busy(true);
         try
         {
             for (var round = 0; round < 6; round++)
@@ -226,6 +245,10 @@ public sealed class CharacterSession
         {
             finalText = ex.Message;
             await ShowAsync(push, ex.Message, done: true);
+        }
+        finally
+        {
+            Busy(false);
         }
         if (string.IsNullOrWhiteSpace(finalText))
         {

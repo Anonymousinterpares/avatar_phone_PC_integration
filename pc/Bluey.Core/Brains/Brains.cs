@@ -349,29 +349,77 @@ public sealed class BrainClient
 
     public async Task<string> ResearchAsync(AppSettings settings, string question, CancellationToken cancellationToken)
     {
-        string url;
-        string key;
-        string model;
-        if (!string.IsNullOrWhiteSpace(settings.XaiApiKey))
+        var provider = WebSearchPreference.Resolve(settings.Mode);
+        switch (provider)
         {
-            url = "https://api.x.ai/v1/responses";
-            key = settings.XaiApiKey;
-            model = settings.XaiTextModel;
+            case BrainMode.OpenRouter:
+                return await OpenRouterResearchAsync(settings, question, cancellationToken);
+            case BrainMode.ChatGptPlan:
+                if (settings.ChatGpt?.CanUsePlan != true)
+                    return "Web search is set to ChatGPT. Sign in with Continue with ChatGPT, and allow plan usage.";
+                return await ResponsesResearchAsync(
+                    "https://api.openai.com/v1/responses",
+                    await ChatGptAccessAsync(settings, cancellationToken),
+                    settings.ChatGptModel,
+                    question,
+                    cancellationToken);
+            case BrainMode.OpenAiLive:
+                if (string.IsNullOrWhiteSpace(settings.OpenAiApiKey))
+                    return "Web search is set to OpenAI. Paste an OpenAI key in the tray.";
+                return await ResponsesResearchAsync(
+                    "https://api.openai.com/v1/responses",
+                    settings.OpenAiApiKey,
+                    settings.OpenAiTextModel,
+                    question,
+                    cancellationToken);
+            case BrainMode.XaiLive:
+                if (string.IsNullOrWhiteSpace(settings.XaiApiKey))
+                    return "Web search is set to Grok. Paste an xAI key in the tray.";
+                return await ResponsesResearchAsync(
+                    "https://api.x.ai/v1/responses",
+                    settings.XaiApiKey,
+                    settings.XaiTextModel,
+                    question,
+                    cancellationToken);
+            default:
+                return "This chat provider does not search the web. Choose OpenRouter, Grok, OpenAI, or ChatGPT under Web search, then click Save.";
         }
-        else if (settings.ChatGpt?.CanUsePlan == true)
-        {
-            url = "https://api.openai.com/v1/responses";
-            key = await ChatGptAccessAsync(settings, cancellationToken);
-            model = settings.ChatGptModel;
-        }
-        else if (!string.IsNullOrWhiteSpace(settings.OpenAiApiKey))
-        {
-            url = "https://api.openai.com/v1/responses";
-            key = settings.OpenAiApiKey;
-            model = settings.OpenAiTextModel;
-        }
-        else return "Research needs an xAI key, an OpenAI key, or a ChatGPT sign-in.";
+    }
 
+    private async Task<string> OpenRouterResearchAsync(AppSettings settings, string question, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(settings.OpenRouterApiKey))
+            return "Web search is set to OpenRouter. Paste an OpenRouter key in the tray.";
+        var route = ChatRoute.OpenRouter(settings);
+        var payload = new Dictionary<string, object?>
+        {
+            ["model"] = route.Model,
+            ["messages"] = new object[]
+            {
+                new Dictionary<string, object> { ["role"] = "system", ["content"] = "Answer in one short paragraph of plain text. No markdown." },
+                new Dictionary<string, object> { ["role"] = "user", ["content"] = question },
+            },
+            ["tools"] = new object[] { new Dictionary<string, object> { ["type"] = "openrouter:web_search" } },
+            ["max_completion_tokens"] = 800,
+        };
+        if (route.Provider != null) payload["provider"] = route.Provider;
+        using var request = new HttpRequestMessage(HttpMethod.Post, route.Url);
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", route.Key.Trim());
+        request.Headers.TryAddWithoutValidation("X-Title", "Bluey PC");
+        request.Content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
+        using var response = await _http.SendAsync(request, cancellationToken);
+        var body = await response.Content.ReadAsStringAsync(cancellationToken);
+        if (!response.IsSuccessStatusCode)
+        {
+            var detail = BriefApiError(body);
+            throw new InvalidOperationException("OpenRouter search failed (" + (int)response.StatusCode + ")." + (detail.Length == 0 ? "" : " " + detail));
+        }
+        var text = ResearchText(body);
+        return string.IsNullOrWhiteSpace(text) ? "Research came back empty." : text.Trim();
+    }
+
+    private async Task<string> ResponsesResearchAsync(string url, string key, string model, string question, CancellationToken cancellationToken)
+    {
         var payload = new Dictionary<string, object?>
         {
             ["model"] = model,
@@ -383,6 +431,25 @@ public sealed class BrainClient
         };
         var reply = await PostResponsesAsync(url, key, payload, cancellationToken);
         return string.IsNullOrWhiteSpace(reply.Text) ? "Research came back empty." : reply.Text;
+    }
+
+    private static string ResearchText(string body)
+    {
+        using var doc = JsonDocument.Parse(body);
+        if (!doc.RootElement.TryGetProperty("choices", out var choices) || choices.GetArrayLength() == 0)
+            return "";
+        var message = choices[0].GetProperty("message");
+        if (!message.TryGetProperty("content", out var content)) return "";
+        if (content.ValueKind == JsonValueKind.String) return content.GetString() ?? "";
+        if (content.ValueKind != JsonValueKind.Array) return "";
+        var text = new StringBuilder();
+        foreach (var part in content.EnumerateArray())
+        {
+            if (part.ValueKind == JsonValueKind.String) text.Append(part.GetString());
+            else if (part.ValueKind == JsonValueKind.Object && part.TryGetProperty("text", out var piece))
+                text.Append(piece.GetString());
+        }
+        return text.ToString();
     }
 
     private Dictionary<string, object?> VoiceSession(AppSettings settings, bool manualTurns)

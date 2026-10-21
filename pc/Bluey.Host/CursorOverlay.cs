@@ -21,7 +21,17 @@ public sealed class CursorOverlay : Window
     private bool _hiddenByUser;
     private bool _hiddenForCapture;
     private bool _dragging;
+    private bool _thinking;
+    private double _thinkTime;
     private System.Windows.Point _grab;
+    private readonly Media.ScaleTransform _scale = new() { ScaleX = 1, ScaleY = 1 };
+    private readonly Media.TranslateTransform _bob = new();
+    private readonly Media.RotateTransform _tilt = new();
+    private readonly Media.TranslateTransform _eyeLeft = new();
+    private readonly Media.TranslateTransform _eyeRight = new();
+    private readonly Media.ScaleTransform _blinkLeft = new() { ScaleX = 1, ScaleY = 1 };
+    private readonly Media.ScaleTransform _blinkRight = new() { ScaleX = 1, ScaleY = 1 };
+    private readonly Media.SolidColorBrush _bodyBrush = new(Media.Color.FromRgb(47, 92, 214));
 
     public event Action<bool>? UserHiddenChanged;
     public event Action? TalkRequested;
@@ -46,35 +56,23 @@ public sealed class CursorOverlay : Window
             Margin = new Thickness(0, 0, 0, 2),
             Background = Media.Brushes.Transparent,
             Cursor = System.Windows.Input.Cursors.SizeAll,
+            RenderTransformOrigin = new System.Windows.Point(0.5, 0.72),
         };
+        var pose = new Media.TransformGroup();
+        pose.Children.Add(_scale);
+        pose.Children.Add(_tilt);
+        pose.Children.Add(_bob);
+        _berry.RenderTransform = pose;
         _berry.Children.Add(new WpfShapes.Ellipse
         {
             Width = 54,
             Height = 54,
-            Fill = new Media.SolidColorBrush(Media.Color.FromRgb(47, 92, 214)),
+            Fill = _bodyBrush,
             HorizontalAlignment = System.Windows.HorizontalAlignment.Center,
             VerticalAlignment = System.Windows.VerticalAlignment.Center,
         });
-        _berry.Children.Add(new WpfShapes.Ellipse
-        {
-            Width = 16,
-            Height = 16,
-            Fill = Media.Brushes.White,
-            HorizontalAlignment = System.Windows.HorizontalAlignment.Center,
-            VerticalAlignment = System.Windows.VerticalAlignment.Center,
-            Margin = new Thickness(-16, 8, 0, 0),
-            IsHitTestVisible = false,
-        });
-        _berry.Children.Add(new WpfShapes.Ellipse
-        {
-            Width = 16,
-            Height = 16,
-            Fill = Media.Brushes.White,
-            HorizontalAlignment = System.Windows.HorizontalAlignment.Center,
-            VerticalAlignment = System.Windows.VerticalAlignment.Center,
-            Margin = new Thickness(16, 8, 0, 0),
-            IsHitTestVisible = false,
-        });
+        _berry.Children.Add(Eye(-16, _eyeLeft, _blinkLeft));
+        _berry.Children.Add(Eye(16, _eyeRight, _blinkRight));
         _berry.MouseLeftButtonDown += BerryDown;
         _berry.MouseMove += BerryMove;
         _berry.MouseLeftButtonUp += BerryUp;
@@ -111,6 +109,12 @@ public sealed class CursorOverlay : Window
             _timer.Start();
         };
     }
+
+    public void SetThinking(bool thinking) => Dispatcher.Invoke(() =>
+    {
+        _thinking = thinking;
+        if (!thinking) RestPose();
+    });
 
     public void SetCaption(string? text)
     {
@@ -223,11 +227,93 @@ public sealed class CursorOverlay : Window
 
     private void Step()
     {
+        Think();
         if (!_hasTarget) return;
         _current = new PointD(_current.X + (_target.X - _current.X) * 0.28, _current.Y + (_target.Y - _current.Y) * 0.28);
         var dpi = Media.VisualTreeHelper.GetDpi(this);
         Left = _current.X / dpi.DpiScaleX - Width / 2;
         Top = _current.Y / dpi.DpiScaleY - Height + 20;
+    }
+
+    private WpfShapes.Ellipse Eye(double x, Media.TranslateTransform shift, Media.ScaleTransform blink)
+    {
+        var eyes = new Media.TransformGroup();
+        eyes.Children.Add(blink);
+        eyes.Children.Add(shift);
+        return new WpfShapes.Ellipse
+        {
+            Width = 16,
+            Height = 16,
+            Fill = Media.Brushes.White,
+            HorizontalAlignment = System.Windows.HorizontalAlignment.Center,
+            VerticalAlignment = System.Windows.VerticalAlignment.Center,
+            Margin = new Thickness(x, 8, 0, 0),
+            IsHitTestVisible = false,
+            RenderTransformOrigin = new System.Windows.Point(0.5, 0.5),
+            RenderTransform = eyes,
+        };
+    }
+
+    private void Think()
+    {
+        if (!_thinking || _dragging)
+        {
+            if (!_thinking) RestPose();
+            return;
+        }
+        _thinkTime += 0.016;
+        var stage = (int)(_thinkTime / 0.7) % 6;
+        var wave = Math.Sin((_thinkTime / 0.7 % 1.0) * Math.PI);
+        double scaleX = 1, scaleY = 1, bob = 0, tilt = 0, eye = 0, blink = 1;
+        switch (stage)
+        {
+            case 0:
+                scaleX = scaleY = 1 + 0.1 * wave;
+                break;
+            case 1:
+                eye = -6 * wave;
+                tilt = -8 * wave;
+                break;
+            case 2:
+                eye = 6 * wave;
+                tilt = 8 * wave;
+                break;
+            case 3:
+                bob = -16 * wave;
+                scaleY = 1 + 0.16 * wave;
+                scaleX = 1 - 0.08 * wave;
+                break;
+            case 4:
+                bob = 4 * wave;
+                scaleY = 1 - 0.16 * wave;
+                scaleX = 1 + 0.12 * wave;
+                tilt = 10 * Math.Sin(wave * Math.PI);
+                break;
+            default:
+                blink = wave > 0.72 ? 0.15 : 1;
+                scaleX = scaleY = 1 + 0.05 * wave;
+                var lift = (byte)(40 * wave);
+                _bodyBrush.Color = Media.Color.FromRgb((byte)(47 + lift), (byte)(92 + lift / 2), 230);
+                break;
+        }
+        if (stage != 5) _bodyBrush.Color = Media.Color.FromRgb(47, 92, 214);
+        _scale.ScaleX = scaleX;
+        _scale.ScaleY = scaleY;
+        _bob.Y = bob;
+        _tilt.Angle = tilt;
+        _eyeLeft.X = _eyeRight.X = eye;
+        _blinkLeft.ScaleY = _blinkRight.ScaleY = blink;
+    }
+
+    private void RestPose()
+    {
+        _thinkTime = 0;
+        _scale.ScaleX = _scale.ScaleY = 1;
+        _bob.Y = 0;
+        _tilt.Angle = 0;
+        _eyeLeft.X = _eyeRight.X = 0;
+        _blinkLeft.ScaleY = _blinkRight.ScaleY = 1;
+        _bodyBrush.Color = Media.Color.FromRgb(47, 92, 214);
     }
 
     private void ApplyPointerStyle()

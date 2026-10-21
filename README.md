@@ -105,7 +105,7 @@ With it on, you can ask him to open an app or a site, click, type, press a short
 
 **Ctrl+Alt+S** stops him and sends him home.
 
-Asking about a fact that may have changed, such as the weather or the next public holiday, uses web search. That search runs with a saved xAI key, a ChatGPT plan sign-in, or an OpenAI key, in that order. Cerebras, Claude, and OpenRouter do not run that search by themselves.
+Asking about a fact that may have changed, such as the weather or the next public holiday, uses web search in the background. It does not open a browser. **Web search** in **Sign in and keys…** starts on the same provider as **Mode**. Change it and click **Save** to keep another provider. That choice is stored in `%AppData%\Bluey\web-search.json` and loaded again next time. OpenRouter searches with its own web tool and the OpenRouter key. Grok, OpenAI, and a ChatGPT plan sign-in use their own search. Claude and Cerebras do not search.
 
 ## Spoken replies
 

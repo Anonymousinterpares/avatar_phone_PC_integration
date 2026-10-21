@@ -44,6 +44,7 @@ public partial class App : System.Windows.Application
         _session = new CharacterSession(brains, desk, _speaker);
         _session.CaptionChanged += text => _overlay.SetCaption(text);
         _session.PointChanged += point => _overlay.PointAt(point);
+        _session.ActivityChanged += busy => _overlay.SetThinking(busy);
         _streamer = new DesktopStreamer();
         _audioStreamer = new AudioStreamer();
         Bluey.Audio.AudioDeviceManager.EnsurePhysicalDefault();
