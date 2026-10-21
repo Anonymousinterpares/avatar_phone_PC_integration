@@ -180,13 +180,13 @@ Bluey prefers port `47821`, so the address stays the same across restarts. If th
 
 Use this when you are away and the other person is sitting at the computer. You can see their screen, talk through their speakers, and use the mouse only after they agree. Both of you need Tailscale, and Bluey must be running on their computer. If you use two Tailscale accounts, share the computer with the helper from the Tailscale admin page first. [Instructions.md](Instructions.md) has those steps.
 
-On their computer: right-click Bluey, choose **Allow help…**, and read the short code. It works one time, for 10 minutes. Leave that window open.
+On their computer: right-click Bluey, choose **Allow help…**, and read the short code on the bar. It works one time, for 10 minutes. The bar can be dragged or hidden. Hiding it does not end the session.
 
 On the phone: connect with the `100.` address, tap **Help someone**, type the code, and tap **Watch**. Touches do not click yet. Two fingers still zoom. Past 120% zoom, that part of the screen becomes sharper.
 
 Press **Hold to talk** and let go when you are done. They hear you on the computer speakers. Muting the computer's sound sends that sound to the phone and leaves the speakers quiet. Your voice still comes out of the speakers, and so do Bluey's spoken replies. While you hold the button, the computer's sound stops on your phone, so your voice does not bounce back out of their speakers.
 
-Tap **Request control**. A window on their computer asks them to press **Allow** or **No**. The helper cannot press this. **Allow** lasts 10 minutes. They can take the mouse back with **Take the mouse back** or **Ctrl+Alt+H**. **Stop help** closes the screen on the phone.
+Tap **Request control**. The bar on their computer asks them to press **Allow** or **No**. The helper cannot press this. **Allow** lasts 10 minutes. They can take the mouse back with **Take the mouse back** or **Ctrl+Alt+H**. **Stop help** closes the screen on the phone. The bar can be dragged out of the way or hidden.
 
 ### From another computer
 

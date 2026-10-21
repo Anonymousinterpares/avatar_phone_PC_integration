@@ -101,8 +101,8 @@ On the computer:
 
 1. Right-click the Bluey icon next to the clock.
 2. Choose **Allow help…**
-3. A window shows a short code. Read that code to the helper. It works one time, for 10 minutes.
-4. Leave that window open.
+3. A small bar appears with a short code. Read that code to the helper. It works one time, for 10 minutes.
+4. Drag the bar if it covers something you need. **Hide** tucks it into a small strip. **Show** brings it back.
 
 On the phone:
 
@@ -112,7 +112,7 @@ On the phone:
 
 You can see the screen. Touches do not click. Two fingers still zoom the picture so you can look closer. Past 120% zoom, that part of the screen becomes sharper.
 
-The computer window changes to say a helper is watching. **Stop help** on that window ends it. So does **Cancel** before anyone has joined.
+The bar then says a helper is watching. **Stop help** on that bar ends it. **Cancel** does that before anyone has joined. You can drag the bar, or hide it, without ending the session.
 
 ### Talk through their speakers
 
@@ -125,12 +125,12 @@ While you hold the button, the computer's sound stops playing on your phone. Tha
 ### Use their mouse
 
 1. On the phone, tap **Request control**.
-2. On the computer, a window asks whether to allow the mouse and keyboard. The helper cannot press this for them.
+2. The bar on the computer asks whether to allow the mouse and keyboard. Drag it if it covers the button you need. The helper cannot press this for them.
 3. They press **Allow** or **No**.
 
 If they press **Allow**, you can click, drag, and type for 10 minutes. They can take the mouse back at any time:
 
-- Press **Take the mouse back** on the Bluey help window, or
+- Press **Take the mouse back** on the Bluey bar, or
 - Press **Ctrl+Alt+H** on their keyboard.
 
 Either one returns you to watching only. **Stop help** closes the screen on the phone.

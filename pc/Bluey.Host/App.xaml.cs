@@ -498,16 +498,20 @@ public partial class App : System.Windows.Application
             _help.ClearAsking(clientId);
             return;
         }
-        if (HelpWindow.Ask() && _help.Grant(clientId))
+        HelpWindowFor().ShowAsk(allow =>
         {
-            _ = _phones!.SendToAsync(clientId, Packet.Of("deskHelpState", "control"));
-            HelpWindowFor().ShowControlling();
-        }
-        else
-        {
-            _help.ClearAsking(clientId);
-            _ = _phones!.SendToAsync(clientId, Packet.Of("deskHelpState", "denied"));
-        }
+            if (allow && _help.Grant(clientId))
+            {
+                _ = _phones!.SendToAsync(clientId, Packet.Of("deskHelpState", "control"));
+                HelpWindowFor().ShowControlling();
+            }
+            else
+            {
+                _help.ClearAsking(clientId);
+                _ = _phones!.SendToAsync(clientId, Packet.Of("deskHelpState", "denied"));
+                if (_help.IsHelper(clientId)) HelpWindowFor().ShowWatching();
+            }
+        });
     }
 
     private void SweepHelpControl()
