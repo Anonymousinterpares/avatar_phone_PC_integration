@@ -118,6 +118,8 @@ The computer window changes to say a helper is watching. **Stop help** on that w
 
 On the phone, press **Hold to talk** and speak. Let go when you are done. They hear you on the computer speakers.
 
+Muting the computer's sound sends that sound to the phone and leaves the speakers quiet. Your voice still comes out of the speakers. Bluey's spoken replies do too.
+
 While you hold the button, the computer's sound stops playing on your phone. That keeps your voice from bouncing back out of their speakers.
 
 ### Use their mouse

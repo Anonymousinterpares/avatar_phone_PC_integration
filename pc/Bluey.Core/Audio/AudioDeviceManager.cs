@@ -102,6 +102,20 @@ public static class AudioDeviceManager
         return list;
     }
 
+    /// <summary>
+    /// The speakers a person can hear. While PC audio is muted, that is the device
+    /// Bluey will restore, not the silent device currently set as the Windows default.
+    /// </summary>
+    public static string? PhysicalPlaybackId()
+    {
+        lock (_lock)
+        {
+            if (!string.IsNullOrEmpty(_lastReroutedOriginalDeviceId))
+                return _lastReroutedOriginalDeviceId;
+        }
+        return GetPhysicalDefaultDeviceId();
+    }
+
     public static string? GetDefaultDeviceId()
     {
         var devices = ListPlaybackDevices();

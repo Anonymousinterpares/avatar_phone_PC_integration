@@ -24,6 +24,7 @@ public sealed class SupertonicSpeaker : IReplySpeaker, IDisposable
     private string? _python;
     private string? _lastError;
     private Thread? _worker;
+    private readonly PhysicalSpeaker _speakers = new();
     private System.Windows.Media.MediaPlayer? _player;
     private System.Media.SoundPlayer? _soundPlayer;
     private readonly System.Threading.Timer _watchdog;
@@ -112,6 +113,7 @@ public sealed class SupertonicSpeaker : IReplySpeaker, IDisposable
             _pending = null;
             _generation++;
         }
+        _speakers.Clear();
         StopPlayer();
     }
 
@@ -137,6 +139,7 @@ public sealed class SupertonicSpeaker : IReplySpeaker, IDisposable
             Monitor.PulseAll(_gate);
         }
         _watchdog.Dispose();
+        _speakers.Dispose();
         StopPlayer();
         KillProcess();
     }
@@ -326,6 +329,12 @@ public sealed class SupertonicSpeaker : IReplySpeaker, IDisposable
 
     private void Play(string wav)
     {
+        if (PhysicalSpeaker.TryReadWav(wav, out var samples, out var rate))
+        {
+            _speakers.Clear();
+            _speakers.Enqueue(samples, rate);
+            return;
+        }
         try
         {
             lock (_gate)
