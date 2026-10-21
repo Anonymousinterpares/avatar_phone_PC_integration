@@ -110,3 +110,11 @@ You can view and control your PC screen live from your phone:
    - **Keyboard (⌨)**: Toggle the on-screen typing bar to send text or Enter to the focused window.
    - **← Back**: Returns to Bluey's face mode.
 
+## Origin
+
+This project started from [bluey-by-riley](https://github.com/rbrown101010/bluey-by-riley) by [Riley Brown](https://github.com/rbrown101010). That repository is the original Mac menu-bar app and iPhone app. Its commits were made by Riley Brown and co-authored with Claude. This repository is the later Windows PC app and Android phone app. Its git history begins at that port, so Riley's commits are not in this clone.
+
+## License
+
+[The Unlicense](LICENSE). The same dedication is in the original repository. Anyone may copy, modify, and distribute this software. It is provided as is, without warranty.
+
