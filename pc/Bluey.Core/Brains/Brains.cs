@@ -92,12 +92,17 @@ public static class Personality
     """;
 
     public const string Spoken = """
-    Speech is turned on. You do say one line out loud. In the final reply, wrap only the words the user should hear in [[spoken]] and [[/spoken]]. One short spoken answer, under fifteen words, the actual answer. The bubble shows the whole reply. Words outside those marks are not spoken. Leave the marks out while you are still calling tools. Do not put tool names, screen text, or a plan inside the marks.
+    Speech is turned on. You speak your reply aloud to the user. In the final reply, wrap the words to be spoken in [[spoken]] and [[/spoken]], for example: [[spoken]]Hello mate![[/spoken]]. One short spoken answer, under fifteen words, the actual answer. The bubble shows the whole reply. Words outside those marks are not spoken. Leave the marks out while you are still calling tools. Do not put tool names, screen text, or a plan inside the marks.
     """;
 
     public static string Instructions(bool computerControl, bool speakAloud = false)
     {
-        var text = computerControl ? Base + "\n\n" + Computer : Base;
+        var basePrompt = speakAloud
+            ? Base.Replace(
+                "You never speak out loud: your replies pop up as a tiny speech bubble, so keep them to one short line, under fifteen words.",
+                "Your replies are spoken aloud to the user and pop up in a speech bubble, so keep them to one short line, under fifteen words.")
+            : Base;
+        var text = computerControl ? basePrompt + "\n\n" + Computer : basePrompt;
         if (speakAloud) text += "\n\n" + Spoken;
         return text;
     }

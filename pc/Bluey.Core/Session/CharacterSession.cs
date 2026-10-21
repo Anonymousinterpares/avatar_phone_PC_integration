@@ -145,7 +145,7 @@ public sealed class CharacterSession
                     // The whole text is the prompt.
                 }
                 var handoff = await AgentHandoff.RunAsync(target, prompt, cancellationToken);
-                Present(handoff, speak: true);
+                Present(handoff, speak: true, fallbackToDisplay: true);
                 return new Packet { Command = "handoff", CallId = packet.CallId, Text = handoff };
             default:
                 return null;
@@ -266,11 +266,11 @@ public sealed class CharacterSession
 
     private async Task ShowAsync(Func<Packet, Task> push, string text, bool done)
     {
-        var display = Present(text, speak: done);
+        var display = Present(text, speak: done, fallbackToDisplay: done);
         await push(new Packet { Command = done ? "captionDone" : "caption", Text = display });
     }
 
-    private string Present(string? text, bool speak)
+    internal string Present(string? text, bool speak, bool fallbackToDisplay = false)
     {
         if (text == null)
         {
@@ -282,6 +282,10 @@ public sealed class CharacterSession
         CaptionChanged?.Invoke(display);
         if (!speak) return display;
         var spoken = SpokenSpan.Extract(text);
+        if (string.IsNullOrWhiteSpace(spoken) && fallbackToDisplay && _speaker?.Enabled == true && !string.IsNullOrWhiteSpace(display))
+        {
+            spoken = display;
+        }
         if (string.IsNullOrWhiteSpace(spoken)) _speaker?.Stop();
         else _speaker?.Speak(spoken);
         return display;
@@ -327,7 +331,7 @@ public sealed class CharacterSession
                 var question = ActionGuard.ReadString(arguments, "question");
                 if (string.IsNullOrWhiteSpace(question)) return new ToolRun { Text = "What should I research?" };
                 var answer = await _brains.ResearchAsync(settings, question, cancellationToken);
-                Present(answer, speak: true);
+                Present(answer, speak: true, fallbackToDisplay: true);
                 return new ToolRun { Text = answer };
             }
             case "click":

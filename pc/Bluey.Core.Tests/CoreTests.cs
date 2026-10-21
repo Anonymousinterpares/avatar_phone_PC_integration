@@ -156,6 +156,27 @@ public class CoreTests
         Assert.True(packetCount > 0, "AudioStreamer should have produced packets with mutePc=true");
     }
 
+    [Fact(Skip = "Requires live OpenRouter network connection")]
+    public async Task Live_CompleteAsync_With_User_Settings()
+    {
+        var store = new SettingsStore();
+        var settings = store.Load();
+        if (!settings.ModeIsReady()) return;
+
+        var client = new BrainClient(new HttpClient(), store);
+        var reply = await client.CompleteAsync(settings, new AskInput
+        {
+            UserText = "Say hello in three words",
+            History = Array.Empty<HistoryTurn>(),
+            PriorTools = Array.Empty<CompletedTool>(),
+            SpeakAloud = true,
+        }, CancellationToken.None);
+
+        Console.WriteLine($"[LIVE TEST REPLY] Text='{reply.Text}'");
+        var spoken = SpokenSpan.Extract(reply.Text);
+        Console.WriteLine($"[LIVE TEST SPOKEN] Extracted='{spoken}'");
+    }
+
     [Fact]
     public void Grid_maps_the_middle_of_the_screen_to_500()
     {
@@ -454,16 +475,49 @@ public class CoreTests
     [Fact]
     public void Spoken_marks_are_added_only_when_speech_is_on()
     {
-        Assert.DoesNotContain("[[spoken]]", Personality.Instructions(false));
+        var off = Personality.Instructions(false);
+        Assert.DoesNotContain("[[spoken]]", off);
+        Assert.Contains("You never speak out loud", off);
         Assert.DoesNotContain("[[spoken]]", Personality.Instructions(true));
         var on = Personality.Instructions(true, speakAloud: true);
         Assert.Contains("[[spoken]]", on);
         Assert.Contains("[[/spoken]]", on);
+        Assert.DoesNotContain("You never speak out loud", on);
+        Assert.Contains("Your replies are spoken aloud", on);
         Assert.Equal("Heard.", SpokenSpan.Extract("Shown. [[spoken]]Heard.[[/spoken]] More."));
         Assert.Null(SpokenSpan.Extract("Shown only."));
         Assert.Null(SpokenSpan.Extract("[[spoken]]no close"));
         Assert.Equal("Shown. Heard. More.", SpokenSpan.Strip("Shown. [[spoken]]Heard.[[/spoken]] More."));
         Assert.Equal("One. Two.", SpokenSpan.Extract("[[spoken]]One.[[/spoken]] and [[SPOKEN]]Two.[[/spoken]]"));
+        Assert.Equal("Hello, mate!", SpokenSpan.Extract("[[Hello, mate!]]"));
+        Assert.Equal("Hello, mate!", SpokenSpan.Strip("[[Hello, mate!]]"));
+        Assert.Equal("Hello, mate!", SpokenSpan.Extract("[[spoken: Hello, mate!]]"));
+        Assert.Equal("Hello, mate!", SpokenSpan.Strip("[[spoken: Hello, mate!]]"));
+    }
+
+    [Fact]
+    public void Present_speaks_fallback_when_enabled_and_no_tags()
+    {
+        var speaker = new RecordingSpeaker { Enabled = true };
+        var session = new CharacterSession(
+            new BrainClient(new HttpClient(), new SettingsStore(Path.Combine(Path.GetTempPath(), "bluey-unused-" + Guid.NewGuid().ToString("N")))),
+            new FakeDesk(),
+            speaker);
+
+        // Without fallback (e.g. ShowCaption), plain text is not spoken
+        session.Present("No tags here.", speak: true, fallbackToDisplay: false);
+        Assert.Empty(speaker.Spoken);
+        Assert.Equal(1, speaker.Stops);
+
+        // With fallback (e.g. ShowAsync on final answer), plain text IS spoken
+        session.Present("Plain answer from model.", speak: true, fallbackToDisplay: true);
+        Assert.Single(speaker.Spoken);
+        Assert.Equal("Plain answer from model.", speaker.Spoken[0]);
+
+        // Generic bracket [[...]] is extracted as spoken even without fallback
+        session.Present("[[Generic bracket answer]]", speak: true, fallbackToDisplay: false);
+        Assert.Equal(2, speaker.Spoken.Count);
+        Assert.Equal("Generic bracket answer", speaker.Spoken[1]);
     }
 
     [Fact]

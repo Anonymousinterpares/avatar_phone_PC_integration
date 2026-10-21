@@ -153,6 +153,10 @@ public static class SpokenSpan
         @"\[\[/?spoken\]\]",
         System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.Compiled);
 
+    private static readonly System.Text.RegularExpressions.Regex GenericBracket = new(
+        @"^\[\[(.*?)\]\]$",
+        System.Text.RegularExpressions.RegexOptions.Singleline | System.Text.RegularExpressions.RegexOptions.Compiled);
+
     public static string? Extract(string? text)
     {
         if (string.IsNullOrEmpty(text)) return null;
@@ -162,14 +166,35 @@ public static class SpokenSpan
             var spoken = match.Groups[1].Value.Trim();
             if (spoken.Length > 0) parts.Add(spoken);
         }
-        return parts.Count == 0 ? null : string.Join(" ", parts);
+        if (parts.Count > 0) return string.Join(" ", parts);
+
+        // If the model wrapped the entire output in [[words]] or [[spoken: words]] instead of [[spoken]]words[[/spoken]]
+        var generic = GenericBracket.Match(text.Trim());
+        if (generic.Success)
+        {
+            var inner = generic.Groups[1].Value.Trim();
+            if (inner.StartsWith("spoken:", StringComparison.OrdinalIgnoreCase))
+                inner = inner["spoken:".Length..].Trim();
+            if (inner.Length > 0) return inner;
+        }
+
+        return null;
     }
 
     public static string Strip(string? text)
     {
         if (string.IsNullOrEmpty(text)) return "";
         var stripped = Leftover.Replace(Span.Replace(text, match => match.Groups[1].Value), "");
-        return stripped.Trim();
+        var trimmed = stripped.Trim();
+        var generic = GenericBracket.Match(trimmed);
+        if (generic.Success)
+        {
+            var inner = generic.Groups[1].Value.Trim();
+            if (inner.StartsWith("spoken:", StringComparison.OrdinalIgnoreCase))
+                inner = inner["spoken:".Length..].Trim();
+            trimmed = inner;
+        }
+        return trimmed;
     }
 }
 
