@@ -570,7 +570,12 @@ class MainActivity : ComponentActivity() {
                             if (cropW < 0.98f || cropH < 0.98f) {
                                 ui = ui.copy(
                                     deskCropFrame = bitmap,
-                                    deskCropRect = androidx.compose.ui.geometry.Rect(cropX, cropY, cropW, cropH),
+                                    deskCropRect = androidx.compose.ui.geometry.Rect(
+                                        cropX,
+                                        cropY,
+                                        cropX + cropW,
+                                        cropY + cropH,
+                                    ),
                                 )
                             } else {
                                 ui = ui.copy(deskFrame = bitmap, deskCropFrame = null, deskCropRect = null)

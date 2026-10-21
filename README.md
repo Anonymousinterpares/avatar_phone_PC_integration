@@ -95,7 +95,7 @@ You can view and control your PC screen live from your phone:
      - Two-finger pinch: zoom in and out (1.0x to 5.0x).
      - Two-finger drag: pan across the zoomed display.
      - Top bar `+`, `−`, and `100%` buttons for quick zoom controls.
-     - Automatic high-resolution streaming: PC captures zoomed sub-regions at native resolution with ramped quality.
+     - Past 120% zoom, the phone tells the PC which part of the full desktop is on screen. The PC sends that whole area at native resolution and JPEG quality 95.
    - **Password Security**:
      - "Remember password" option caches credentials securely on the device.
      - Session caching prevents repeated password prompts during the same connection.

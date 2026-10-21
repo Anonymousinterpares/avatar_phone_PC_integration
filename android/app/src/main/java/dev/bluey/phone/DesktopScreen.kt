@@ -149,38 +149,31 @@ fun DesktopViewScreen(
 
     val currentFrame by rememberUpdatedState(frame)
     val currentOnTouch by rememberUpdatedState(onTouch)
+    val currentOnCropChanged by rememberUpdatedState(onCropChanged)
+    val baseFrameW = frame?.width ?: 0
+    val baseFrameH = frame?.height ?: 0
 
-    // Report crop changes with debouncing to request high-res zoomed streaming from PC
-    LaunchedEffect(zoomScale, panOffset) {
-        if (zoomScale <= 1.05f) {
-            onCropChanged(0f, 0f, 1f, 1f)
-        } else {
-            delay(250)
-            val current = currentFrame
-            if (current != null && canvasSize.width > 0 && canvasSize.height > 0) {
-                val canvasW = canvasSize.width.toFloat()
-                val canvasH = canvasSize.height.toFloat()
-                val imgW = current.width.toFloat()
-                val imgH = current.height.toFloat()
-                val fitScale = minOf(canvasW / imgW, canvasH / imgH)
-                val totalW = imgW * fitScale * zoomScale
-                val totalH = imgH * fitScale * zoomScale
-                val maxPanX = if (totalW > canvasW) (totalW - canvasW) / 2f else 0f
-                val maxPanY = if (totalH > canvasH) (totalH - canvasH) / 2f else 0f
-                val curPanX = panOffset.x.coerceIn(-maxPanX, maxPanX)
-                val curPanY = panOffset.y.coerceIn(-maxPanY, maxPanY)
-                val drawLeft = (canvasW / 2f + curPanX) - totalW / 2f
-                val drawTop = (canvasH / 2f + curPanY) - totalH / 2f
-
-                val cropX = ((0f - drawLeft) / totalW).coerceIn(0f, 1f)
-                val cropY = ((0f - drawTop) / totalH).coerceIn(0f, 1f)
-                val cropR = ((canvasW - drawLeft) / totalW).coerceIn(0f, 1f)
-                val cropB = ((canvasH - drawTop) / totalH).coerceIn(0f, 1f)
-                val cropW = (cropR - cropX).coerceIn(0.05f, 1f)
-                val cropH = (cropB - cropY).coerceIn(0.05f, 1f)
-                onCropChanged(cropX, cropY, cropW, cropH)
-            }
+    // Past 120% zoom, ask the PC for native-quality pixels of the whole area
+    // of the full desktop image that is currently inside the phone screen.
+    LaunchedEffect(zoomScale, panOffset, canvasSize, baseFrameW, baseFrameH) {
+        if (zoomScale <= SharpViewZoom) {
+            currentOnCropChanged(0f, 0f, 1f, 1f)
+            return@LaunchedEffect
         }
+        if (baseFrameW <= 0 || baseFrameH <= 0 || canvasSize.width <= 0 || canvasSize.height <= 0) {
+            return@LaunchedEffect
+        }
+        delay(250)
+        val view = visibleDesktopFraction(
+            canvasSize.width.toFloat(),
+            canvasSize.height.toFloat(),
+            baseFrameW.toFloat(),
+            baseFrameH.toFloat(),
+            zoomScale,
+            panOffset,
+        )
+        if (view == null) currentOnCropChanged(0f, 0f, 1f, 1f)
+        else currentOnCropChanged(view.x, view.y, view.w, view.h)
     }
 
     Column(
@@ -538,8 +531,11 @@ fun DesktopViewScreen(
                         dstSize = IntSize(totalW.roundToInt().coerceAtLeast(1), totalH.roundToInt().coerceAtLeast(1)),
                     )
 
-                    // Draw high-res crop frame on top if available for the zoomed region
-                    if (cropImageBitmap != null && cropRect != null && (cropRect.width < 0.98f || cropRect.height < 0.98f)) {
+                    // Sharp capture of every original pixel currently inside the phone view.
+                    if (zoomScale > SharpViewZoom && cropImageBitmap != null && cropRect != null &&
+                        cropRect.width > 0.01f && cropRect.height > 0.01f &&
+                        (cropRect.width < 0.98f || cropRect.height < 0.98f)
+                    ) {
                         val cropDstLeft = drawLeft + cropRect.left * totalW
                         val cropDstTop = drawTop + cropRect.top * totalH
                         val cropDstW = cropRect.width * totalW
@@ -577,6 +573,40 @@ fun DesktopViewScreen(
             }
         }
     }
+}
+
+private const val SharpViewZoom = 1.2f
+
+private data class DesktopFraction(val x: Float, val y: Float, val w: Float, val h: Float)
+
+/** Fraction of the full desktop image that intersects the phone screen. */
+private fun visibleDesktopFraction(
+    canvasW: Float,
+    canvasH: Float,
+    imgW: Float,
+    imgH: Float,
+    zoomScale: Float,
+    pan: Offset,
+): DesktopFraction? {
+    if (imgW <= 0f || imgH <= 0f || canvasW <= 0f || canvasH <= 0f) return null
+    val fitScale = minOf(canvasW / imgW, canvasH / imgH)
+    val totalW = imgW * fitScale * zoomScale
+    val totalH = imgH * fitScale * zoomScale
+    if (totalW <= 0f || totalH <= 0f) return null
+    val maxPanX = if (totalW > canvasW) (totalW - canvasW) / 2f else 0f
+    val maxPanY = if (totalH > canvasH) (totalH - canvasH) / 2f else 0f
+    val curPanX = pan.x.coerceIn(-maxPanX, maxPanX)
+    val curPanY = pan.y.coerceIn(-maxPanY, maxPanY)
+    val drawLeft = (canvasW / 2f + curPanX) - totalW / 2f
+    val drawTop = (canvasH / 2f + curPanY) - totalH / 2f
+    val left = ((0f - drawLeft) / totalW).coerceIn(0f, 1f)
+    val top = ((0f - drawTop) / totalH).coerceIn(0f, 1f)
+    val right = ((canvasW - drawLeft) / totalW).coerceIn(0f, 1f)
+    val bottom = ((canvasH - drawTop) / totalH).coerceIn(0f, 1f)
+    val w = right - left
+    val h = bottom - top
+    if (w <= 0.01f || h <= 0.01f) return null
+    return DesktopFraction(left, top, w, h)
 }
 
 private fun canvasToPc(
