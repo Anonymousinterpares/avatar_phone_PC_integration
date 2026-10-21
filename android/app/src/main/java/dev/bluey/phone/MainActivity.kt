@@ -26,6 +26,12 @@ class MainActivity : ComponentActivity() {
     private val main = Handler(Looper.getMainLooper())
     private val speaker = Speaker()
     private val deskAudio = DesktopAudioPlayer()
+    private val helpMic = HelpMic { pcm ->
+        try {
+            val audio = android.util.Base64.encodeToString(pcm, android.util.Base64.NO_WRAP)
+            link.send("deskTalk", audio = audio)
+        } catch (_: Exception) { }
+    }
     private lateinit var link: DeskLink
     private lateinit var live: LiveVoice
     private lateinit var plan: PlanSpeech
@@ -121,7 +127,12 @@ class MainActivity : ComponentActivity() {
             deskMutePc = deskMutePc,
         )
         setContent {
-            if (ui.deskMode) {
+            if (ui.helpEntry && !ui.deskMode) {
+                HelpCodeScreen(
+                    onSubmit = { code -> submitHelp(code) },
+                    onBack = { ui = ui.copy(helpEntry = false) },
+                )
+            } else if (ui.deskMode) {
                 androidx.activity.compose.BackHandler { stopDesktop() }
                 if (ui.deskNeedsPassword && !ui.deskAuthenticated) {
                     val sp = getSharedPreferences("bluey", MODE_PRIVATE)
@@ -164,6 +175,12 @@ class MainActivity : ComponentActivity() {
                         onToggleOrientation = { toggleOrientation() },
                         onTestTts = { testTts() },
                         onToggleTts = { toggleTts() },
+                        helpMode = ui.helpMode,
+                        helpControl = ui.helpControl,
+                        helpAsking = ui.helpAsking,
+                        onRequestControl = { requestControl() },
+                        onTalkDown = { talkDown() },
+                        onTalkUp = { talkUp() },
                     )
                 }
             } else {
@@ -180,6 +197,7 @@ class MainActivity : ComponentActivity() {
                     onHoldEnd = { holdEnd() },
                     onType = { sendTyped(it) },
                     onDesktop = { startDesktop() },
+                    onHelp = { beginHelp() },
                     onAudioSettingsChanged = { en, q, m -> sendDesktopAudioSettings(en, q, m) },
                     onTestTts = { testTts() },
                     onToggleTts = { toggleTts() },
@@ -195,6 +213,7 @@ class MainActivity : ComponentActivity() {
         plan.destroy()
         speaker.stop()
         deskAudio.stop()
+        helpMic.stop()
         stopMic()
         link.close()
         work.shutdownNow()
@@ -584,6 +603,18 @@ class MainActivity : ComponentActivity() {
                     } catch (_: Exception) { }
                 }
             }
+            "deskHelpState" -> {
+                when (packet.optString("text")) {
+                    "watch" -> ui = ui.copy(helpControl = false, helpAsking = false, status = "Watching. The computer has the mouse.")
+                    "control" -> ui = ui.copy(helpControl = true, helpAsking = false, status = "You can use the mouse.")
+                    "denied" -> ui = ui.copy(helpAsking = false, status = "The person at the computer said no.")
+                    "ended" -> {
+                        talkUp()
+                        stopDesktop()
+                        ui = ui.copy(status = "The computer ended the help session.")
+                    }
+                }
+            }
             "deskAudio" -> {
                 if (ui.deskAudioEnabled) {
                     val audioData = packet.optString("audio", "")
@@ -627,6 +658,8 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun onDropped() {
+        helpMic.stop()
+        deskAudio.setPaused(false)
         live.close()
         plan.cancel()
         stopMic()
@@ -651,7 +684,86 @@ class MainActivity : ComponentActivity() {
             deskCropRect = null,
             deskAuthenticated = false,
             deskNeedsPassword = false,
+            helpEntry = false,
+            helpMode = false,
+            helpControl = false,
+            helpAsking = false,
         )
+    }
+
+    private fun beginHelp() {
+        if (!link.connected) {
+            ui = ui.copy(status = "Connect to the PC first.")
+            return
+        }
+        ui = ui.copy(helpEntry = true, status = "Type the code shown on the computer.")
+    }
+
+    private fun submitHelp(code: String) {
+        work.execute {
+            try {
+                val reply = link.request("deskHelp", text = code, timeoutMs = 10_000)
+                main.post {
+                    when (reply.optString("text")) {
+                        "ok" -> {
+                            ui = ui.copy(
+                                helpEntry = false,
+                                helpMode = true,
+                                helpControl = false,
+                                helpAsking = false,
+                                deskMode = true,
+                                deskAuthenticated = true,
+                                deskNeedsPassword = false,
+                                status = "Watching. The computer has the mouse.",
+                            )
+                            setImmersiveMode(true)
+                            requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+                            requestDesktopStream()
+                            sendDesktopAudioSettings(ui.deskAudioEnabled, ui.deskAudioQuality, ui.deskMutePc)
+                        }
+                        "expired" -> ui = ui.copy(status = "That code has expired. Ask for a new one on the computer.")
+                        "busy" -> ui = ui.copy(status = "Someone is already helping on that computer.")
+                        else -> ui = ui.copy(status = "That code did not work. Ask the person at the computer to show it again.")
+                    }
+                }
+            } catch (ex: Exception) {
+                main.post { ui = ui.copy(status = ex.message ?: "Could not start help.") }
+            }
+        }
+    }
+
+    private fun requestControl() {
+        if (!ui.helpMode || ui.helpControl || ui.helpAsking) return
+        ui = ui.copy(helpAsking = true, status = "Waiting for the person at the computer to press Allow.")
+        work.execute {
+            try {
+                val reply = link.request("deskControl", timeoutMs = 10_000)
+                if (reply.optString("text") == "no") {
+                    main.post { ui = ui.copy(helpAsking = false, status = "The computer did not take that request.") }
+                }
+            } catch (ex: Exception) {
+                main.post { ui = ui.copy(helpAsking = false, status = ex.message ?: "Could not ask for control.") }
+            }
+        }
+    }
+
+    private fun talkDown() {
+        if (!ui.helpMode) return
+        if (androidx.core.content.ContextCompat.checkSelfPermission(this, android.Manifest.permission.RECORD_AUDIO) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            ui = ui.copy(status = "Allow the microphone, then hold Talk again.")
+            permissions.launch(arrayOf(android.Manifest.permission.RECORD_AUDIO))
+            return
+        }
+        deskAudio.setPaused(true)
+        helpMic.start()
+    }
+
+    private fun talkUp() {
+        helpMic.stop()
+        deskAudio.setPaused(false)
+        if (link.connected) {
+            try { link.send("deskTalkStop") } catch (_: Exception) { }
+        }
     }
 
     private fun startDesktop() {
@@ -737,7 +849,12 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun stopDesktop() {
+        val leavingHelp = ui.helpMode
+        talkUp()
         work.execute {
+            if (leavingHelp) {
+                try { link.send("deskHelpLeave") } catch (_: Exception) { }
+            }
             try { link.request("deskStop", timeoutMs = 5_000) } catch (_: Exception) { }
         }
         requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
@@ -749,6 +866,10 @@ class MainActivity : ComponentActivity() {
             deskCropRect = null,
             deskAuthenticated = false,
             deskNeedsPassword = false,
+            helpEntry = false,
+            helpMode = false,
+            helpControl = false,
+            helpAsking = false,
         )
     }
 
@@ -831,6 +952,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun sendDesktopInput(action: String, x: Float, y: Float, extra: Map<String, Any>) {
+        if (ui.helpMode && !ui.helpControl) return
         work.execute {
             try {
                 val input = JSONObject()

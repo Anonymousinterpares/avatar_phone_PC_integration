@@ -12,6 +12,7 @@ class DesktopAudioPlayer {
     private val queue = LinkedBlockingQueue<ByteArray>()
     private var thread: Thread? = null
     @Volatile private var running = false
+    @Volatile private var paused = false
 
     @Synchronized
     fun play(pcm: ByteArray, sampleRate: Int, channels: Int) {
@@ -66,7 +67,7 @@ class DesktopAudioPlayer {
                     } catch (_: InterruptedException) {
                         break
                     }
-                    if (chunk.isNotEmpty() && running) {
+                    if (chunk.isNotEmpty() && running && !paused) {
                         val t = track
                         if (t != null) {
                             if (t.playState != AudioTrack.PLAYSTATE_PLAYING) {
@@ -84,8 +85,14 @@ class DesktopAudioPlayer {
         } catch (_: Exception) { }
     }
 
+    fun setPaused(value: Boolean) {
+        paused = value
+        if (value) queue.clear()
+    }
+
     @Synchronized
     fun stop() {
+        paused = false
         running = false
         thread?.interrupt()
         thread = null

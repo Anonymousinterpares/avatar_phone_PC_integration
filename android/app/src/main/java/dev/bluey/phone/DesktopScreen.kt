@@ -5,6 +5,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -108,6 +109,43 @@ fun DesktopPasswordScreen(
 }
 
 @Composable
+fun HelpCodeScreen(
+    onSubmit: (String) -> Unit,
+    onBack: () -> Unit,
+) {
+    var code by remember { mutableStateOf("") }
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black)
+            .padding(24.dp),
+        verticalArrangement = Arrangement.Center,
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Text("Help code", color = Color.White, fontSize = 24.sp)
+        Spacer(Modifier.height(8.dp))
+        Text(
+            "Type the code shown on the computer.",
+            color = Color(0xFFB9B2CC),
+            fontSize = 14.sp,
+            textAlign = TextAlign.Center,
+        )
+        Spacer(Modifier.height(16.dp))
+        TextField(
+            value = code,
+            onValueChange = { code = it.take(8) },
+            singleLine = true,
+            label = { Text("Code") },
+        )
+        Spacer(Modifier.height(20.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Button(onClick = onBack) { Text("Back") }
+            Button(onClick = { if (code.isNotBlank()) onSubmit(code.trim()) }) { Text("Watch") }
+        }
+    }
+}
+
+@Composable
 fun DesktopViewScreen(
     frame: Bitmap?,
     cropFrame: Bitmap? = null,
@@ -133,6 +171,12 @@ fun DesktopViewScreen(
     onToggleOrientation: () -> Unit,
     onTestTts: () -> Unit = {},
     onToggleTts: () -> Unit = {},
+    helpMode: Boolean = false,
+    helpControl: Boolean = false,
+    helpAsking: Boolean = false,
+    onRequestControl: () -> Unit = {},
+    onTalkDown: () -> Unit = {},
+    onTalkUp: () -> Unit = {},
 ) {
     var showSettings by remember { mutableStateOf(false) }
     var hideControls by remember { mutableStateOf(false) }
@@ -176,11 +220,59 @@ fun DesktopViewScreen(
         else currentOnCropChanged(view.x, view.y, view.w, view.h)
     }
 
+    var talking by remember { mutableStateOf(false) }
     Column(
         modifier = Modifier
             .fillMaxSize()
             .background(Color.Black),
     ) {
+        if (helpMode) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(Color(0xFF1A1A2E))
+                    .padding(horizontal = 10.dp, vertical = 6.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Text(
+                    when {
+                        helpControl -> "You can use the mouse. The person at the computer can take it back."
+                        helpAsking -> "Waiting for the person at the computer to press Allow."
+                        else -> "Watching. Touches do not click until they allow it."
+                    },
+                    color = Color.White,
+                    fontSize = 13.sp,
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        if (talking) "Talking…" else "Hold to talk",
+                        color = Color.White,
+                        fontSize = 14.sp,
+                        modifier = Modifier
+                            .background(Color(0xFF4254D6), RoundedCornerShape(10.dp))
+                            .pointerInput(Unit) {
+                                awaitEachGesture {
+                                    awaitFirstDown()
+                                    talking = true
+                                    onTalkDown()
+                                    try {
+                                        waitForUpOrCancellation()
+                                    } finally {
+                                        talking = false
+                                        onTalkUp()
+                                    }
+                                }
+                            }
+                            .padding(horizontal = 14.dp, vertical = 10.dp),
+                    )
+                    if (!helpControl) {
+                        Button(onClick = onRequestControl, enabled = !helpAsking) {
+                            Text(if (helpAsking) "Asking…" else "Request control")
+                        }
+                    }
+                }
+            }
+        }
         if (!hideControls) {
             Row(
                 modifier = Modifier

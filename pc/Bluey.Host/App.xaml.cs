@@ -20,6 +20,10 @@ public partial class App : System.Windows.Application
     private SupertonicSpeaker? _speaker;
     private DesktopStreamer? _streamer;
     private AudioStreamer? _audioStreamer;
+    private readonly HelpSession _help = new();
+    private readonly HelpSpeaker _helpSpeaker = new();
+    private HelpWindow? _helpWindow;
+    private bool _stoppingHelp;
 
     protected override void OnStartup(StartupEventArgs e)
     {
@@ -51,15 +55,60 @@ public partial class App : System.Windows.Application
                 {
                     var currentSettings = store.Load();
                     var password = currentSettings.DesktopPassword;
-                    if (string.IsNullOrEmpty(password))
-                        return Packet.Of("deskAuth", "ok", packet.CallId);
                     var attempt = packet.Text ?? "";
-                    if (attempt == password)
+                    if (string.IsNullOrEmpty(password) || attempt == password)
+                    {
+                        _help.MarkOwner(PhoneLink.CurrentClientId);
                         return Packet.Of("deskAuth", "ok", packet.CallId);
+                    }
                     return Packet.Of("deskAuth", "fail", packet.CallId);
                 }
+                case "deskHelp":
+                {
+                    var joined = _help.TryJoin(PhoneLink.CurrentClientId, packet.Text ?? "");
+                    if (joined == HelpJoin.Ok)
+                    {
+                        _ = Dispatcher.BeginInvoke(new Action(() => HelpWindowFor().ShowWatching()));
+                        return Packet.Of("deskHelp", "ok", packet.CallId);
+                    }
+                    var text = joined switch
+                    {
+                        HelpJoin.Expired => "expired",
+                        HelpJoin.Busy => "busy",
+                        _ => "fail",
+                    };
+                    return Packet.Of("deskHelp", text, packet.CallId);
+                }
+                case "deskControl":
+                {
+                    var asker = PhoneLink.CurrentClientId;
+                    if (!_help.BeginAsk(asker))
+                        return Packet.Of("deskControl", "no", packet.CallId);
+                    _ = Dispatcher.BeginInvoke(new Action(() => FinishControlAsk(asker)));
+                    return Packet.Of("deskControl", "asking", packet.CallId);
+                }
+                case "deskTalk":
+                {
+                    if (!_help.IsHelper(PhoneLink.CurrentClientId) || string.IsNullOrEmpty(packet.Audio)) return null;
+                    try { _helpSpeaker.Play(Convert.FromBase64String(packet.Audio)); }
+                    catch { }
+                    return null;
+                }
+                case "deskTalkStop":
+                    if (_help.IsHelper(PhoneLink.CurrentClientId)) _helpSpeaker.Reset();
+                    return null;
+                case "deskHelpLeave":
+                    if (_help.Remove(PhoneLink.CurrentClientId))
+                    {
+                        _helpSpeaker.Reset();
+                        _ = Dispatcher.BeginInvoke(new Action(() => _helpWindow?.ShowDisconnected()));
+                    }
+                    return Packet.Of("deskHelpLeft", null, packet.CallId);
                 case "deskStart":
                 {
+                    var viewer = PhoneLink.CurrentClientId;
+                    if (!_help.IsHelper(viewer) && !_help.CanControl(viewer))
+                        return Packet.Of("deskStart", "denied", packet.CallId);
                     var fps = 10;
                     var quality = 60;
                     var scale = 0.5;
@@ -97,8 +146,13 @@ public partial class App : System.Windows.Application
                     return null;
                 }
                 case "deskStop":
-                    _streamer!.Stop();
+                    if (_help.Remove(PhoneLink.CurrentClientId))
+                    {
+                        _helpSpeaker.Reset();
+                        _ = Dispatcher.BeginInvoke(new Action(() => _helpWindow?.ShowDisconnected()));
+                    }
                     _streamer!.UpdateCrop(0, 0, 1.0, 1.0);
+                    if (!_help.HasAnyone()) _streamer.Stop();
                     return Packet.Of("deskStopped", null, packet.CallId);
                 case "deskAudioStart":
                 {
@@ -166,6 +220,7 @@ public partial class App : System.Windows.Application
                 }
                 case "deskInput":
                 {
+                    if (!_help.CanControl(PhoneLink.CurrentClientId)) return null;
                     try
                     {
                         using var doc = System.Text.Json.JsonDocument.Parse(packet.Text ?? "{}");
@@ -278,11 +333,20 @@ public partial class App : System.Windows.Application
             _streamer?.Stop();
             _audioStreamer?.Stop();
         };
+        _phones.OnClientClosed = clientId =>
+        {
+            if (!_help.Remove(clientId)) return;
+            _helpSpeaker.Reset();
+            _ = Dispatcher.BeginInvoke(new Action(() => _helpWindow?.ShowDisconnected()));
+        };
         _phones.Start();
         var hints = new UsageHintsWindow();
         hints.Show();
         hints.SetEnabled(settings.UsageHints);
-        _tray = new TrayApp(settings, store, brains, _session, _phones, _overlay, hints, speech, _speaker);
+        _tray = new TrayApp(settings, store, brains, _session, _phones, _overlay, hints, speech, _speaker, ShowHelpCode);
+        var helpSweep = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
+        helpSweep.Tick += (_, _) => SweepHelpControl();
+        helpSweep.Start();
         _speaker.StatusChanged += _ => BroadcastTtsStatus();
         if (speech.Current.TextToSpeech) _speaker.Warmup();
         var gaze = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(200) };
@@ -295,6 +359,8 @@ public partial class App : System.Windows.Application
 
     protected override void OnExit(ExitEventArgs e)
     {
+        _helpSpeaker.Dispose();
+        _helpWindow?.Dispose();
         _audioStreamer?.Dispose();
         _streamer?.Dispose();
         _phones?.Dispose();
@@ -330,6 +396,7 @@ public partial class App : System.Windows.Application
         source?.AddHook(HotkeyHook);
         RegisterHotKey(hwnd, 1, 0x0002 | 0x0001, 0x53); // Ctrl+Alt+S
         RegisterHotKey(hwnd, 2, 0x0002 | 0x0001, 0x20); // Ctrl+Alt+Space
+        RegisterHotKey(hwnd, 3, 0x0002 | 0x0001, 0x48); // Ctrl+Alt+H
     }
 
     private IntPtr HotkeyHook(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
@@ -346,7 +413,85 @@ public partial class App : System.Windows.Application
             _ = _phones.BroadcastAsync(Packet.Of(_session.Awake ? "sleep" : "wake"));
             handled = true;
         }
+        else if (wParam == 3)
+        {
+            TakeMouseBack();
+            handled = true;
+        }
         return IntPtr.Zero;
+    }
+
+    private HelpWindow HelpWindowFor()
+    {
+        if (_helpWindow != null) return _helpWindow;
+        _helpWindow = new HelpWindow();
+        _helpWindow.StopRequested += StopHelp;
+        _helpWindow.MouseBackRequested += TakeMouseBack;
+        _helpWindow.NewCodeRequested += ShowHelpCode;
+        return _helpWindow;
+    }
+
+    private void ShowHelpCode()
+    {
+        var previous = _help.KickHelper();
+        _helpSpeaker.Reset();
+        if (previous != null && _phones != null)
+            _ = _phones.SendToAsync(previous, Packet.Of("deskHelpState", "ended"));
+        HelpWindowFor().ShowCode(_help.StartCode());
+    }
+
+    private void StopHelp()
+    {
+        if (_stoppingHelp) return;
+        _stoppingHelp = true;
+        try
+        {
+            var helper = _help.KickHelper();
+            _help.CancelCode();
+            _helpSpeaker.Reset();
+            if (helper != null && _phones != null)
+                _ = _phones.SendToAsync(helper, Packet.Of("deskHelpState", "ended"));
+            _helpWindow?.Hide();
+        }
+        finally
+        {
+            _stoppingHelp = false;
+        }
+    }
+
+    private void TakeMouseBack()
+    {
+        var helper = _help.RevokeHelperControl();
+        if (helper == null || _phones == null) return;
+        _ = _phones.SendToAsync(helper, Packet.Of("deskHelpState", "watch"));
+        _helpWindow?.ShowWatching();
+    }
+
+    private void FinishControlAsk(string clientId)
+    {
+        if (!_help.IsHelper(clientId))
+        {
+            _help.ClearAsking(clientId);
+            return;
+        }
+        if (HelpWindow.Ask() && _help.Grant(clientId))
+        {
+            _ = _phones!.SendToAsync(clientId, Packet.Of("deskHelpState", "control"));
+            HelpWindowFor().ShowControlling();
+        }
+        else
+        {
+            _help.ClearAsking(clientId);
+            _ = _phones!.SendToAsync(clientId, Packet.Of("deskHelpState", "denied"));
+        }
+    }
+
+    private void SweepHelpControl()
+    {
+        var helper = _help.ExpireControl();
+        if (helper == null || _phones == null) return;
+        _ = _phones.SendToAsync(helper, Packet.Of("deskHelpState", "watch"));
+        _helpWindow?.ShowWatching();
     }
 
     private string GetTtsStatusJson()

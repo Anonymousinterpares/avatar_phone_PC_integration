@@ -2,6 +2,8 @@
 
 A small character on your Windows PC, driven from an Android phone. The phone is the microphone and the face. The PC holds the login, the screen, and the mouse.
 
+Home setup, Tailscale, and the phone screen are written for a non-technical person in [Instructions.md](Instructions.md). Add each new help stage there when that stage works.
+
 ## PC
 
 Double-click `Run-Bluey.cmd` in this folder.
@@ -73,7 +75,9 @@ The phone app installs from an APK. There is no store listing.
 ### Over the Internet with Tailscale
 1. Install [Tailscale](https://tailscale.com/) on both your PC and phone and sign in to the same account.
 2. In the PC tray, right-click Bluey and choose **Show connection address**. One of the addresses listed will be your Tailscale IP (e.g. `100.x.y.z:port`).
-3. Type that `100.x.y.z:port` into the PC address field on the phone and tap **Connect**. Your connection is encrypted end-to-end via WireGuard.
+3. Type that `100.x.y.z:port` into the PC address field on the phone and tap **Connect**. Your connection is encrypted end-to-end via WireGuard. Bluey prefers port `47821`, so the address stays the same across restarts.
+
+Watching, talking through the PC speakers, and taking the mouse after the person at the PC presses Allow are in [Instructions.md](Instructions.md).
 
 ## Remote Desktop & Password Protection
 

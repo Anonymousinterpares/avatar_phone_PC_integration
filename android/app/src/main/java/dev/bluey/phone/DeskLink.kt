@@ -49,12 +49,13 @@ class DeskLink(
         Thread({ readLoop(opened.getInputStream(), ticket) }, "bluey-link").apply { isDaemon = true }.start()
     }
 
-    fun send(command: String, text: String? = null, tool: String? = null, callId: String? = null) {
+    fun send(command: String, text: String? = null, tool: String? = null, callId: String? = null, audio: String? = null) {
         val packet = JSONObject()
         packet.put("command", command)
         if (text != null) packet.put("text", text)
         if (tool != null) packet.put("tool", tool)
         if (callId != null) packet.put("callID", callId)
+        if (audio != null) packet.put("audio", audio)
         write(packet)
     }
 

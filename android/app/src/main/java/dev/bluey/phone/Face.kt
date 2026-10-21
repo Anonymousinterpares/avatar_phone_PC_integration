@@ -95,6 +95,10 @@ data class Ui(
     val ttsRunning: Boolean = false,
     val ttsStatus: String = "Checking...",
     val ttsError: String = "",
+    val helpEntry: Boolean = false,
+    val helpMode: Boolean = false,
+    val helpControl: Boolean = false,
+    val helpAsking: Boolean = false,
 )
 
 private val Berry1 = Color(0xFFA9BCFF)
@@ -116,6 +120,7 @@ fun BlueyScreen(
     onHoldEnd: () -> Unit,
     onType: (String) -> Unit,
     onDesktop: () -> Unit,
+    onHelp: () -> Unit = {},
     onAudioSettingsChanged: (enabled: Boolean, quality: String, mutePc: Boolean) -> Unit = { _, _, _ -> },
     onTestTts: () -> Unit = {},
     onToggleTts: () -> Unit = {},
@@ -247,6 +252,9 @@ fun BlueyScreen(
                     }
                 )
             }
+        }
+        Button(onClick = onHelp, modifier = Modifier.fillMaxWidth()) {
+            Text("Help someone")
         }
 
         if (soundSettingsOpen) {
