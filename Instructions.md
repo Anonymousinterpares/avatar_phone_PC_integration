@@ -137,6 +137,30 @@ Either one returns you to watching only. **Stop help** closes the screen on the 
 
 If they press **No**, you keep watching and can ask again.
 
+## Help from another computer
+
+The helper does not need the phone app for this. Both computers need Bluey running, and Tailscale connected if they are not in the same house.
+
+On the computer that needs help:
+
+1. Right-click the Bluey icon and choose **Allow help…**
+2. Read the code to the helper. It works once, for 10 minutes.
+3. Right-click Bluey again and choose **Show connection address**. Read the address that starts with `100.`.
+
+On the helper's computer:
+
+1. Right-click the Bluey icon and choose **Help another computer…**
+2. Type that address and the code. Click **Connect**.
+3. The window shows their screen at that computer's own resolution, so text stays readable. The mouse on the helper's computer does not click there yet. The picture goes blank when their computer closes the connection.
+4. Press **Hold to talk** to speak through their speakers. Let go when you are done.
+5. **Hear their sound** plays their computer sound on the helper's computer. Turn it off if you do not want that.
+6. Click **Request control**. They must press **Allow** on their own computer. The helper cannot press it for them.
+7. After **Allow**, use the mouse and keyboard in that window. Clicking another window on the helper's computer stops the keys from going across.
+8. They take the mouse back with **Take the mouse back** or **Ctrl+Alt+H**. **Stop help** on their computer closes the session.
+9. **Disconnect** in the helper window leaves as well.
+
+If the connection drops, the helper window tries again for 2 minutes. A new code is not needed for that short retry. After 2 minutes, ask them to show a new code.
+
 ## 7. Open the computer screen on the phone
 
 1. On the phone, tap **Remote Desktop**.
