@@ -14,51 +14,72 @@ public sealed class CursorOverlay : Window
     private readonly WpfControls.TextBlock _caption;
     private readonly DispatcherTimer _timer;
     private readonly DispatcherTimer _captionTimer;
+    private readonly WpfControls.Grid _berry;
     private PointD _current;
     private PointD _target;
     private bool _hasTarget;
     private bool _hiddenByUser;
     private bool _hiddenForCapture;
+    private bool _dragging;
+    private System.Windows.Point _grab;
+
+    public event Action<bool>? UserHiddenChanged;
+    public event Action? TalkRequested;
 
     public CursorOverlay()
     {
         WindowStyle = WindowStyle.None;
         AllowsTransparency = true;
-        Background = Media.Brushes.Transparent;
+        Background = null;
         Topmost = true;
         ShowActivated = false;
         ShowInTaskbar = false;
         Width = 240;
         Height = 150;
-        IsHitTestVisible = false;
-        var root = new WpfControls.Grid { IsHitTestVisible = false };
-        root.Children.Add(new WpfShapes.Ellipse
+        var root = new WpfControls.Grid();
+        _berry = new WpfControls.Grid
+        {
+            Width = 72,
+            Height = 72,
+            HorizontalAlignment = System.Windows.HorizontalAlignment.Center,
+            VerticalAlignment = System.Windows.VerticalAlignment.Bottom,
+            Margin = new Thickness(0, 0, 0, 2),
+            Background = Media.Brushes.Transparent,
+            Cursor = System.Windows.Input.Cursors.SizeAll,
+        };
+        _berry.Children.Add(new WpfShapes.Ellipse
         {
             Width = 54,
             Height = 54,
             Fill = new Media.SolidColorBrush(Media.Color.FromRgb(47, 92, 214)),
             HorizontalAlignment = System.Windows.HorizontalAlignment.Center,
-            VerticalAlignment = System.Windows.VerticalAlignment.Bottom,
-            Margin = new Thickness(0, 0, 0, 8),
+            VerticalAlignment = System.Windows.VerticalAlignment.Center,
         });
-        root.Children.Add(new WpfShapes.Ellipse
+        _berry.Children.Add(new WpfShapes.Ellipse
         {
             Width = 16,
             Height = 16,
             Fill = Media.Brushes.White,
             HorizontalAlignment = System.Windows.HorizontalAlignment.Center,
-            VerticalAlignment = System.Windows.VerticalAlignment.Bottom,
-            Margin = new Thickness(-16, 0, 0, 28),
+            VerticalAlignment = System.Windows.VerticalAlignment.Center,
+            Margin = new Thickness(-16, 8, 0, 0),
+            IsHitTestVisible = false,
         });
-        root.Children.Add(new WpfShapes.Ellipse
+        _berry.Children.Add(new WpfShapes.Ellipse
         {
             Width = 16,
             Height = 16,
             Fill = Media.Brushes.White,
             HorizontalAlignment = System.Windows.HorizontalAlignment.Center,
-            VerticalAlignment = System.Windows.VerticalAlignment.Bottom,
-            Margin = new Thickness(16, 0, 0, 28),
+            VerticalAlignment = System.Windows.VerticalAlignment.Center,
+            Margin = new Thickness(16, 8, 0, 0),
+            IsHitTestVisible = false,
         });
+        _berry.MouseLeftButtonDown += BerryDown;
+        _berry.MouseMove += BerryMove;
+        _berry.MouseLeftButtonUp += BerryUp;
+        _berry.MouseRightButtonUp += BerryMenu;
+        root.Children.Add(_berry);
         _caption = new WpfControls.TextBlock
         {
             Foreground = Media.Brushes.White,
@@ -70,6 +91,7 @@ public sealed class CursorOverlay : Window
             HorizontalAlignment = System.Windows.HorizontalAlignment.Center,
             VerticalAlignment = System.Windows.VerticalAlignment.Top,
             Visibility = System.Windows.Visibility.Collapsed,
+            IsHitTestVisible = false,
         };
         root.Children.Add(_caption);
         Content = root;
@@ -82,7 +104,7 @@ public sealed class CursorOverlay : Window
             _caption.Visibility = Visibility.Collapsed;
             _caption.Text = "";
         };
-        SourceInitialized += (_, _) => MakeClickThrough();
+        SourceInitialized += (_, _) => ApplyPointerStyle();
         Loaded += (_, _) =>
         {
             GoHome();
@@ -122,8 +144,10 @@ public sealed class CursorOverlay : Window
 
     public void SetUserHidden(bool hidden) => Dispatcher.Invoke(() =>
     {
+        if (_hiddenByUser == hidden) return;
         _hiddenByUser = hidden;
         ApplyOpacity();
+        UserHiddenChanged?.Invoke(hidden);
     });
 
     public void SetVisible(bool visible) => Dispatcher.Invoke(() =>
@@ -132,7 +156,62 @@ public sealed class CursorOverlay : Window
         ApplyOpacity();
     });
 
-    private void ApplyOpacity() => Opacity = _hiddenByUser || _hiddenForCapture ? 0 : 1;
+    private void ApplyOpacity()
+    {
+        var hidden = _hiddenByUser || _hiddenForCapture;
+        Opacity = hidden ? 0 : 1;
+        IsHitTestVisible = !hidden;
+        if (_dragging && hidden) EndDrag();
+        ApplyPointerStyle();
+    }
+
+    private void BerryDown(object sender, System.Windows.Input.MouseButtonEventArgs e)
+    {
+        _dragging = true;
+        _grab = e.GetPosition(this);
+        _berry.CaptureMouse();
+        e.Handled = true;
+    }
+
+    private void BerryMove(object sender, System.Windows.Input.MouseEventArgs e)
+    {
+        if (!_dragging || e.LeftButton != System.Windows.Input.MouseButtonState.Pressed) return;
+        var pos = e.GetPosition(this);
+        Left += pos.X - _grab.X;
+        Top += pos.Y - _grab.Y;
+        var dpi = Media.VisualTreeHelper.GetDpi(this);
+        var x = (Left + Width / 2) * dpi.DpiScaleX;
+        var y = (Top + Height - 20) * dpi.DpiScaleY;
+        _current = _target = new PointD(x, y);
+        _hasTarget = true;
+        e.Handled = true;
+    }
+
+    private void BerryUp(object sender, System.Windows.Input.MouseButtonEventArgs e)
+    {
+        EndDrag();
+        e.Handled = true;
+    }
+
+    private void EndDrag()
+    {
+        _dragging = false;
+        if (_berry.IsMouseCaptured) _berry.ReleaseMouseCapture();
+    }
+
+    private void BerryMenu(object sender, System.Windows.Input.MouseButtonEventArgs e)
+    {
+        EndDrag();
+        e.Handled = true;
+        var menu = new BerryDotMenu();
+        menu.HideChosen += () => SetUserHidden(true);
+        menu.TalkChosen += () => TalkRequested?.Invoke();
+        var origin = _berry.PointToScreen(new System.Windows.Point(_berry.ActualWidth - 8, 8));
+        var dpi = Media.VisualTreeHelper.GetDpi(this);
+        menu.Left = origin.X / dpi.DpiScaleX;
+        menu.Top = origin.Y / dpi.DpiScaleY;
+        menu.Show();
+    }
 
     private void GoHome()
     {
@@ -151,11 +230,16 @@ public sealed class CursorOverlay : Window
         Top = _current.Y / dpi.DpiScaleY - Height + 20;
     }
 
-    private void MakeClickThrough()
+    private void ApplyPointerStyle()
     {
         var hwnd = new WindowInteropHelper(this).Handle;
+        if (hwnd == IntPtr.Zero) return;
         var style = GetWindowLong(hwnd, -20);
-        SetWindowLong(hwnd, -20, style | 0x20 | 0x80000 | 0x08000000 | 0x80);
+        const int transparent = 0x20;
+        style |= 0x80000 | 0x08000000 | 0x80;
+        if (_hiddenByUser || _hiddenForCapture) style |= transparent;
+        else style &= ~transparent;
+        SetWindowLong(hwnd, -20, style);
         SetWindowDisplayAffinity(hwnd, 0x11);
     }
 

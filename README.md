@@ -140,7 +140,7 @@ Right-click the tray icon for the rest:
 | **Show usage hints** | Opens a short panel of the same talk and pointing examples. |
 | **Speak replies** and **Voice sex** | Reads one marked line aloud. |
 | **Send him home** | Parks the blueberry at the bottom of the screen. |
-| **Hide the blueberry** | Takes him off the screen without quitting. |
+| **Hide the blueberry** | Takes him off the screen without quitting. The same Hide is on a right-click of the dot. Left-drag moves him. Talk on that menu opens a box. Type and press Enter. Double-click the box to close it. |
 | **Phone on the left / center / right** | Where his eyes rest. |
 | **Allow help…** | Lets another phone, or another computer running Bluey, watch, talk, and ask for the mouse. |
 | **Help another computer…** | Opens a window that connects to someone else's Bluey. No phone is required. |

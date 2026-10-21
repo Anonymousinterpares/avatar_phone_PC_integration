@@ -31,6 +31,8 @@ public sealed class TrayApp : IDisposable
 
     private readonly Action _allowHelp;
     private readonly Action _helpSomeone;
+    private ToolStripMenuItem? _hiddenItem;
+    private BerryTalkWindow? _talkWindow;
 
     public TrayApp(AppSettings settings, SettingsStore store, BrainClient brains, CharacterSession session, PhoneLink phones, CursorOverlay overlay, UsageHintsWindow hints, SpeechConfigStore speech, SupertonicSpeaker speaker, Action allowHelp, Action helpSomeone)
     {
@@ -62,6 +64,12 @@ public sealed class TrayApp : IDisposable
         };
         _icon.ContextMenuStrip = BuildMenu();
         _icon.DoubleClick += (_, _) => ShowSettings(ask: false);
+        _overlay.UserHiddenChanged += hidden =>
+        {
+            if (_hiddenItem != null && _hiddenItem.Checked != hidden)
+                _hiddenItem.Checked = hidden;
+        };
+        _overlay.TalkRequested += ShowBerryTalk;
     }
 
     public void Refresh()
@@ -188,6 +196,7 @@ public sealed class TrayApp : IDisposable
         menu.Items.Add("Send him home", null, (_, _) => _overlay.PointAt(null));
         var hidden = new ToolStripMenuItem("Hide the blueberry") { CheckOnClick = true };
         hidden.CheckedChanged += (_, _) => _overlay.SetUserHidden(hidden.Checked);
+        _hiddenItem = hidden;
         menu.Items.Add(hidden);
         menu.Items.Add("Phone on the left", null, (_, _) => Seat("left"));
         menu.Items.Add("Phone in the center", null, (_, _) => Seat("center"));
@@ -249,6 +258,25 @@ public sealed class TrayApp : IDisposable
     {
         _settings.PhoneSeat = seat;
         _store.Save(_settings);
+    }
+
+    private void ShowBerryTalk()
+    {
+        if (_talkWindow == null)
+        {
+            _talkWindow = new BerryTalkWindow();
+            _talkWindow.Submit += text =>
+                _ = _session.AskAsync(text, _phones.BroadcastAsync, CancellationToken.None);
+            _talkWindow.Closed += (_, _) => _talkWindow = null;
+        }
+        if (!_talkWindow.IsVisible)
+        {
+            _talkWindow.Left = _overlay.Left + 150;
+            _talkWindow.Top = _overlay.Top;
+        }
+        _talkWindow.Show();
+        _talkWindow.Activate();
+        _talkWindow.FocusInput();
     }
 
     private void ShowSettings(bool ask)

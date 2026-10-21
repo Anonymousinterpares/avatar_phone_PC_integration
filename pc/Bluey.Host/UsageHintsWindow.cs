@@ -194,7 +194,7 @@ public sealed class UsageHintsWindow : Window
             "Sign in and keys… picks Cerebras, OpenRouter, Grok, ChatGPT, or Claude. OpenRouter model picks Qwen 3.8 27B or a :nitro model. The host pin applies only to Qwen 3.8 27B.",
             "Phone on the left, center, or right is where his eyes rest.",
             "Send him home parks the blueberry at the bottom of the screen.",
-            "Hide the blueberry takes him off the screen without quitting.",
+            "Hide the blueberry takes him off the screen without quitting. Drag the dot to move him. Right-click it for Hide and Talk.",
             "Show usage hints is this panel.",
             "Speak replies reads aloud only the line he wraps for speech. Voice sex is Male or Female. Both are saved in bluey.config.json.",
             "Show connection address is what to type on the phone if it cannot find the PC.",
