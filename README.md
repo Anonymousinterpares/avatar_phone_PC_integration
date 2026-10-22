@@ -105,7 +105,7 @@ With it on, you can ask him to open an app or a site, click, type, press a short
 
 **Ctrl+Alt+S** stops him and sends him home.
 
-**No touch**, on the tray or on the phone, is for when you are away from the computer and only want to hear what is on the screen. He can look and point at what he describes. He will not move the Windows mouse, click, type, scroll, or open anything. The two switches stay in step, and the choice is remembered on this PC. Turn it off when you want him to use the computer again. **Let him use the computer** still has to be on for that.
+**No touch**, on the tray, on the phone, or on a right-click of the blueberry, is for when you are away from the computer and only want to hear what is on the screen. The prompt tells him whether it is on or off. He can look and point at what he describes. He will not move the Windows mouse, click, type, scroll, or open anything. The switches stay in step, and the choice is remembered on this PC. Turn it off when you want him to use the computer again. **Let him use the computer** still has to be on for that. The reply sits beside him, not on top of him.
 
 Asking about a fact that may have changed, such as the weather or the next public holiday, uses web search in the background. It does not open a browser. **Web search** in **Sign in and keys…** starts on the same provider as **Mode**. Change it and click **Save** to keep another provider. That choice is stored in `%AppData%\Bluey\web-search.json` and loaded again next time. OpenRouter searches with its own web tool and the OpenRouter key. Grok, OpenAI, and a ChatGPT plan sign-in use their own search. Claude and Cerebras do not search.
 
@@ -144,7 +144,7 @@ Right-click the tray icon for the rest:
 | **Speak replies** and **Voice sex** | Reads one marked line aloud. |
 | **Avatar…** | Size (large is the biggest), walk speed at 100%, 150%, or 200%, walk or teleport, which corner he sleeps in, and whether a reply sits in the caption bar or a comic-book cloud. |
 | **Send him home** | Parks the blueberry at the bottom of the screen. |
-| **Hide the blueberry** | Takes him off the screen without quitting. The same Hide is on a right-click of the dot. Left-drag moves him. Talk on that menu opens a box. Type and press Enter. Double-click the box to close it. |
+| **Hide the blueberry** | Takes him off the screen without quitting. The same Hide is on a right-click of the dot, along with Talk, Go to sleep, and No touch. Left-drag moves him. Talk opens a box. Type and press Enter. Double-click the box to close it. |
 | **Phone on the left / center / right** | Where his eyes rest. |
 | **Allow help…** | Lets another phone, or another computer running Bluey, watch, talk, and ask for the mouse. |
 | **Help another computer…** | Opens a window that connects to someone else's Bluey. No phone is required. |

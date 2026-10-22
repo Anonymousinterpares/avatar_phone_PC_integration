@@ -71,6 +71,14 @@ public sealed class TrayApp : IDisposable
                 _hiddenItem.Checked = hidden;
         };
         _overlay.TalkRequested += ShowBerryTalk;
+        _overlay.SetNoTouch(_settings.NoTouch);
+        _overlay.NoTouchToggleRequested += () =>
+        {
+            _settings.NoTouch = !_settings.NoTouch;
+            _store.Save(_settings);
+            ShowNoTouch(_settings.NoTouch);
+            _ = _phones.BroadcastAsync(Packet.Of("session", _session.SessionJson()));
+        };
     }
 
     public void Refresh()
@@ -146,6 +154,7 @@ public sealed class TrayApp : IDisposable
             if (_noTouchItem.Checked == _settings.NoTouch) return;
             _settings.NoTouch = _noTouchItem.Checked;
             _store.Save(_settings);
+            _overlay.SetNoTouch(_settings.NoTouch);
             _ = _phones.BroadcastAsync(Packet.Of("session", _session.SessionJson()));
         };
         var control = new ToolStripMenuItem("Let him use the computer") { Checked = _settings.ComputerControl, CheckOnClick = true };
@@ -273,6 +282,7 @@ public sealed class TrayApp : IDisposable
 
     public void ShowNoTouch(bool enabled)
     {
+        _overlay.SetNoTouch(enabled);
         if (_noTouchItem.Checked == enabled) return;
         _noTouchItem.Checked = enabled;
     }

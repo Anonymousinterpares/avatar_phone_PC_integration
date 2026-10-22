@@ -38,8 +38,10 @@ public sealed class CursorOverlay : Window
     private double _speed = 1;
     private string _sleepCorner = "bottom-right";
     private string _bubble = "bar";
+    private bool _noTouch;
     private string _captionText = "";
     private BerryComicBubble? _comic;
+    private BerryBarCaption? _bar;
     private double _comicX = double.NaN;
     private double _comicY = double.NaN;
     private readonly WpfShapes.Ellipse _dot;
@@ -68,6 +70,7 @@ public sealed class CursorOverlay : Window
 
     public event Action<bool>? UserHiddenChanged;
     public event Action? TalkRequested;
+    public event Action? NoTouchToggleRequested;
 
     public CursorOverlay()
     {
@@ -223,6 +226,8 @@ public sealed class CursorOverlay : Window
         });
     }
 
+    public void SetNoTouch(bool on) => Dispatcher.Invoke(() => _noTouch = on);
+
     public void PlaceNearBerry(System.Windows.Window window)
     {
         Dispatcher.Invoke(() =>
@@ -235,42 +240,47 @@ public sealed class CursorOverlay : Window
 
     private void ShowCaption()
     {
-        if (_captionText.Length == 0 || _bubble != "bar")
+        _caption.Visibility = Visibility.Collapsed;
+        _caption.Text = "";
+        var show = _captionText.Length > 0 && !_hiddenByUser && !_hiddenForCapture;
+        if (!show || _bubble != "comic") _comic?.Hide();
+        if (!show || _bubble != "bar") _bar?.Hide();
+        if (show) MoveBubble(true);
+    }
+
+    private void MoveBubble(bool force)
+    {
+        if (_captionText.Length == 0 || _hiddenByUser || _hiddenForCapture) return;
+        var avoid = AvatarDip();
+        if (avoid.IsEmpty || double.IsNaN(avoid.X) || double.IsNaN(avoid.Y)) return;
+        var anchorX = avoid.Left + avoid.Width / 2;
+        var anchorY = avoid.Top + avoid.Height * 0.28;
+        if (!force && Math.Abs(anchorX - _comicX) < 0.5 && Math.Abs(anchorY - _comicY) < 0.5) return;
+        _comicX = anchorX;
+        _comicY = anchorY;
+        var dpi = Media.VisualTreeHelper.GetDpi(this);
+        if (_bubble == "comic")
         {
-            _caption.Visibility = Visibility.Collapsed;
-            _caption.Text = "";
+            _comic ??= new BerryComicBubble();
+            _comic.Place(_captionText, anchorX, anchorY, dpi, avoid);
         }
         else
         {
-            _caption.Text = _captionText;
-            _caption.Visibility = Visibility.Visible;
+            _bar ??= new BerryBarCaption();
+            _bar.Place(_captionText, dpi, avoid);
         }
-        if (_bubble != "comic" || _captionText.Length == 0 || _hiddenByUser || _hiddenForCapture)
-        {
-            _comic?.Hide();
-            return;
-        }
-        MoveComic(true);
     }
 
-    private void MoveComic(bool force)
+    private Rect AvatarDip()
     {
-        if (_bubble != "comic" || _captionText.Length == 0 || _hiddenByUser || _hiddenForCapture)
-        {
-            _comic?.Hide();
-            return;
-        }
         var w = ActualWidth > 1 ? ActualWidth : Width;
         var h = ActualHeight > 1 ? ActualHeight : Height;
+        var berryW = _berry.ActualWidth > 1 ? _berry.ActualWidth : _berry.Width;
         var berryH = _berry.ActualHeight > 1 ? _berry.ActualHeight : _berry.Height;
-        var x = Left + w / 2;
-        var y = _asleep ? Top + h * 0.55 : Top + h - berryH * 0.72;
-        if (double.IsNaN(x) || double.IsNaN(y)) return;
-        if (!force && _comic is { IsVisible: true } && Math.Abs(x - _comicX) < 0.5 && Math.Abs(y - _comicY) < 0.5) return;
-        _comicX = x;
-        _comicY = y;
-        _comic ??= new BerryComicBubble();
-        _comic.Place(_captionText, x, y, Media.VisualTreeHelper.GetDpi(this));
+        if (berryW < 1 || berryH < 1 || double.IsNaN(Left) || double.IsNaN(Top)) return Rect.Empty;
+        var left = Left + (w - berryW) / 2;
+        var top = _asleep ? Top + (h - berryH) / 2 : Top + h - berryH - 2;
+        return new Rect(left, top, berryW, berryH);
     }
 
     public void TalkForText() => Dispatcher.Invoke(() =>
@@ -462,10 +472,11 @@ public sealed class CursorOverlay : Window
     {
         EndDrag();
         e.Handled = true;
-        var menu = new BerryDotMenu();
+        var menu = new BerryDotMenu(_noTouch);
         menu.HideChosen += () => SetUserHidden(true);
         menu.TalkChosen += () => TalkRequested?.Invoke();
         menu.SleepChosen += () => Sleep();
+        menu.NoTouchChosen += () => NoTouchToggleRequested?.Invoke();
         PlaceNearBerry(menu);
     }
 
@@ -688,7 +699,7 @@ public sealed class CursorOverlay : Window
         }
         if (_film == null) Think();
         else if (!_asleep) AdvanceFilm(16);
-        if (_bubble == "comic" && _captionText.Length > 0 && !_hiddenByUser && !_hiddenForCapture) MoveComic(false);
+        if (_captionText.Length > 0 && !_hiddenByUser && !_hiddenForCapture) MoveBubble(false);
     }
 
     private WpfShapes.Ellipse Eye(double x, Media.TranslateTransform shift, Media.ScaleTransform blink)

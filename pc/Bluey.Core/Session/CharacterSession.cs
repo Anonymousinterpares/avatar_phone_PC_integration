@@ -257,7 +257,7 @@ public sealed class CharacterSession
         }
         if (string.IsNullOrWhiteSpace(finalText))
         {
-            finalText = "The model returned no words.";
+            finalText = "...";
             await ShowAsync(push, finalText, done: true);
         }
         var drop = slept || DateTimeOffset.UtcNow < StoppedUntil;

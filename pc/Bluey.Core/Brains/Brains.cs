@@ -113,7 +113,17 @@ public static class Personality
             : computerControl ? basePrompt + "\n\n" + Computer
             : basePrompt;
         if (speakAloud) text += "\n\n" + Spoken;
+        text += "\n\n" + TouchLine(noTouch, computerControl);
         return text;
+    }
+
+    private static string TouchLine(bool noTouch, bool computerControl)
+    {
+        if (noTouch)
+            return "No-touch is ON. Do not call click, type_text, press_keys, scroll, drag, open_app, or open_url. Those commands are off. Look at the screen and answer. Do not try a computer command.";
+        if (!computerControl)
+            return "No-touch is OFF. Computer control is also off, so do not call click, type_text, press_keys, scroll, drag, open_app, or open_url. Look and point only.";
+        return "No-touch is OFF. You may call click, type_text, press_keys, scroll, drag, open_app, and open_url when the user asks you to.";
     }
 }
 

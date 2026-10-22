@@ -256,8 +256,10 @@ public class CoreTests
         Assert.Contains("No-touch", ActionGuard.Refusal("click", true, false, "{}", noTouch: true)!, StringComparison.OrdinalIgnoreCase);
         Assert.Null(ActionGuard.Refusal("look_at_screen", true, false, "{}", noTouch: true));
         var handsOff = Personality.Instructions(true, noTouch: true);
-        Assert.Contains("No-touch is on", handsOff);
-        Assert.DoesNotContain("open_url", handsOff);
+        Assert.Contains("No-touch is ON", handsOff);
+        Assert.Contains("Do not try a computer command", handsOff);
+        Assert.DoesNotContain("You can also use the computer", handsOff);
+        Assert.Contains("No-touch is OFF", Personality.Instructions(true));
         Assert.DoesNotContain(ToolCatalog.OpenAiTools(true, noTouch: true), tool => (string)tool["name"]! == "click");
     }
 

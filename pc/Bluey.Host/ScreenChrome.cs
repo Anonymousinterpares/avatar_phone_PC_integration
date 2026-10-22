@@ -47,6 +47,61 @@ public static class ScreenPlace
         return new System.Windows.Point(x, y);
     }
 
+    /// <summary>Keeps a popup inside the work area and off the blueberry.</summary>
+    public static System.Windows.Point ClearOf(
+        double left, double top, double width, double height,
+        System.Windows.Rect avoid, System.Windows.Rect work)
+    {
+        const double margin = 8;
+        const double gap = 12;
+        var spot = Inside(left, top, width, height, work, margin);
+        var pad = new System.Windows.Rect(avoid.X - gap, avoid.Y - gap, Math.Max(1, avoid.Width) + gap * 2, Math.Max(1, avoid.Height) + gap * 2);
+        if (!new System.Windows.Rect(spot.X, spot.Y, width, height).IntersectsWith(pad)) return spot;
+        var options = new[]
+        {
+            new System.Windows.Point(spot.X, pad.Top - height),
+            new System.Windows.Point(spot.X, pad.Bottom),
+            new System.Windows.Point(pad.Left - width, spot.Y),
+            new System.Windows.Point(pad.Right, spot.Y),
+        };
+        var best = spot;
+        var bestOverlap = double.MaxValue;
+        var bestShift = double.MaxValue;
+        foreach (var option in options)
+        {
+            var clamped = Inside(option.X, option.Y, width, height, work, margin);
+            var moved = new System.Windows.Rect(clamped.X, clamped.Y, width, height);
+            var overlap = Overlap(moved, pad);
+            var shift = Math.Abs(clamped.X - left) + Math.Abs(clamped.Y - top);
+            if (overlap < bestOverlap - 0.5 || (Math.Abs(overlap - bestOverlap) < 0.5 && shift < bestShift))
+            {
+                bestOverlap = overlap;
+                bestShift = shift;
+                best = clamped;
+            }
+        }
+        return best;
+    }
+
+    private static System.Windows.Point Inside(double left, double top, double width, double height, System.Windows.Rect work, double margin)
+    {
+        var x = left;
+        var y = top;
+        if (x + width > work.Right - margin) x = work.Right - margin - width;
+        if (x < work.Left + margin) x = work.Left + margin;
+        if (y + height > work.Bottom - margin) y = work.Bottom - margin - height;
+        if (y < work.Top + margin) y = work.Top + margin;
+        return new System.Windows.Point(x, y);
+    }
+
+    private static double Overlap(System.Windows.Rect a, System.Windows.Rect b)
+    {
+        var w = Math.Min(a.Right, b.Right) - Math.Max(a.Left, b.Left);
+        var h = Math.Min(a.Bottom, b.Bottom) - Math.Max(a.Top, b.Top);
+        if (w <= 0 || h <= 0) return 0;
+        return w * h;
+    }
+
     public static System.Windows.Rect WorkArea(double dipX, double dipY, System.Windows.DpiScale dpi)
     {
         var scaleX = dpi.DpiScaleX < 0.5 ? 1 : dpi.DpiScaleX;
@@ -131,7 +186,7 @@ public sealed class BerryComicBubble : System.Windows.Window
         SourceInitialized += (_, _) => MakeClickThrough();
     }
 
-    public void Place(string text, double anchorX, double anchorY, System.Windows.DpiScale dpi)
+    public void Place(string text, double anchorX, double anchorY, System.Windows.DpiScale dpi, System.Windows.Rect avoid)
     {
         _text.Width = double.NaN;
         _text.Text = text;
@@ -144,14 +199,14 @@ public sealed class BerryComicBubble : System.Windows.Window
         var bodyW = Math.Max(120, textW + padX * 2);
         var bodyH = Math.Max(68, textH + padY * 2);
         var work = ScreenPlace.WorkArea(anchorX, anchorY, dpi);
-        const double gap = 8;
+        const double gap = 14;
         const double tail = 22;
-        var needH = bodyH + tail + gap + 28;
-        var needW = bodyW + tail + gap + 28;
-        var above = anchorY - work.Top;
-        var below = work.Bottom - anchorY;
-        var roomLeft = anchorX - work.Left;
-        var roomRight = work.Right - anchorX;
+        var needH = bodyH + tail + gap + 8;
+        var needW = bodyW + tail + gap + 8;
+        var above = avoid.Top - work.Top;
+        var below = work.Bottom - avoid.Bottom;
+        var roomLeft = avoid.Left - work.Left;
+        var roomRight = work.Right - avoid.Right;
         int side;
         if (above >= needH) side = 0;
         else if (below >= needH) side = 1;
@@ -162,28 +217,20 @@ public sealed class BerryComicBubble : System.Windows.Window
 
         var along = (side is 0 or 1 ? bodyW : bodyH) / 2;
         var drawn = Draw(bodyW, bodyH, side, tail, along);
-        double left;
-        double top;
-        switch (side)
+        var spot = Seat(side, drawn, avoid, gap);
+        spot = Clamp(spot.X, spot.Y, drawn.Width, drawn.Height, work);
+        spot = ScreenPlace.ClearOf(spot.X, spot.Y, drawn.Width, drawn.Height, avoid, work);
+        var parked = new System.Windows.Rect(spot.X, spot.Y, drawn.Width, drawn.Height);
+        var away = SideAway(parked, avoid);
+        if (away != side)
         {
-            case 1:
-                left = anchorX - drawn.TipX;
-                top = anchorY + gap - drawn.TipY;
-                break;
-            case 2:
-                left = anchorX + gap - drawn.TipX;
-                top = anchorY - drawn.TipY;
-                break;
-            case 3:
-                left = anchorX - gap - drawn.TipX;
-                top = anchorY - drawn.TipY;
-                break;
-            default:
-                left = anchorX - drawn.TipX;
-                top = anchorY - gap - drawn.TipY;
-                break;
+            side = away;
+            along = (side is 0 or 1 ? bodyW : bodyH) / 2;
+            drawn = Draw(bodyW, bodyH, side, tail, along);
+            spot = Seat(side, drawn, avoid, gap);
+            spot = Clamp(spot.X, spot.Y, drawn.Width, drawn.Height, work);
+            spot = ScreenPlace.ClearOf(spot.X, spot.Y, drawn.Width, drawn.Height, avoid, work);
         }
-        var spot = Clamp(left, top, drawn.Width, drawn.Height, work);
         var aim = side is 0 or 1 ? anchorX - spot.X - drawn.OriginX : anchorY - spot.Y - drawn.OriginY;
         along = Math.Clamp(aim, drawn.AlongMin, drawn.AlongMax);
         drawn = Draw(bodyW, bodyH, side, tail, along);
@@ -195,6 +242,27 @@ public sealed class BerryComicBubble : System.Windows.Window
         Left = spot.X;
         Top = spot.Y;
         if (!IsVisible) Show();
+    }
+
+    private static System.Windows.Point Seat(int side, CloudDraw drawn, System.Windows.Rect avoid, double gap)
+    {
+        var midX = avoid.Left + avoid.Width / 2 - drawn.TipX;
+        var midY = avoid.Top + avoid.Height / 2 - drawn.TipY;
+        return side switch
+        {
+            1 => new System.Windows.Point(midX, avoid.Bottom + gap - drawn.TipY),
+            2 => new System.Windows.Point(avoid.Right + gap - drawn.TipX, midY),
+            3 => new System.Windows.Point(avoid.Left - gap - drawn.TipX, midY),
+            _ => new System.Windows.Point(midX, avoid.Top - gap - drawn.TipY),
+        };
+    }
+
+    private static int SideAway(System.Windows.Rect bubble, System.Windows.Rect avoid)
+    {
+        var dx = (bubble.Left + bubble.Width / 2) - (avoid.Left + avoid.Width / 2);
+        var dy = (bubble.Top + bubble.Height / 2) - (avoid.Top + avoid.Height / 2);
+        if (Math.Abs(dx) > Math.Abs(dy)) return dx < 0 ? 3 : 2;
+        return dy < 0 ? 0 : 1;
     }
 
     private static System.Windows.Point Clamp(double left, double top, double width, double height, System.Windows.Rect work)
@@ -354,6 +422,70 @@ public sealed class BerryComicBubble : System.Windows.Window
         var style = GetWindowLong(hwnd, -20);
         style |= 0x20 | 0x80000 | 0x08000000 | 0x80;
         SetWindowLong(hwnd, -20, style);
+    }
+
+    [DllImport("user32.dll")] private static extern int GetWindowLong(IntPtr hwnd, int index);
+    [DllImport("user32.dll")] private static extern int SetWindowLong(IntPtr hwnd, int index, int value);
+}
+
+/// <summary>The plain caption bar, kept off the blueberry and inside the screen.</summary>
+public sealed class BerryBarCaption : System.Windows.Window
+{
+    private readonly WpfControls.TextBlock _text;
+
+    public BerryBarCaption()
+    {
+        WindowStyle = System.Windows.WindowStyle.None;
+        AllowsTransparency = true;
+        Background = Media.Brushes.Transparent;
+        Topmost = true;
+        ShowInTaskbar = false;
+        ShowActivated = false;
+        Focusable = false;
+        IsHitTestVisible = false;
+        SizeToContent = System.Windows.SizeToContent.WidthAndHeight;
+        _text = new WpfControls.TextBlock
+        {
+            Foreground = Media.Brushes.White,
+            Background = new Media.SolidColorBrush(Media.Color.FromArgb(210, 20, 24, 38)),
+            Padding = new System.Windows.Thickness(8, 4, 8, 4),
+            TextWrapping = System.Windows.TextWrapping.Wrap,
+            MaxWidth = 240,
+            FontSize = 14,
+            IsHitTestVisible = false,
+        };
+        Content = _text;
+        SourceInitialized += (_, _) =>
+        {
+            var hwnd = new WindowInteropHelper(this).Handle;
+            if (hwnd == IntPtr.Zero) return;
+            var style = GetWindowLong(hwnd, -20);
+            style |= 0x20 | 0x80000 | 0x08000000 | 0x80;
+            SetWindowLong(hwnd, -20, style);
+        };
+    }
+
+    public void Place(string text, System.Windows.DpiScale dpi, System.Windows.Rect avoid)
+    {
+        _text.Text = text;
+        _text.Measure(new System.Windows.Size(240, double.PositiveInfinity));
+        var width = Math.Max(48, _text.DesiredSize.Width);
+        var height = Math.Max(24, _text.DesiredSize.Height);
+        var anchorX = avoid.Left + avoid.Width / 2;
+        var anchorY = avoid.Top;
+        var work = ScreenPlace.WorkArea(anchorX, anchorY, dpi);
+        var left = anchorX - width / 2;
+        var top = avoid.Top - height - 12;
+        var spot = ScreenPlace.ClearOf(left, top, width, height, avoid, work);
+        Left = spot.X;
+        Top = spot.Y;
+        if (!IsVisible) Show();
+        UpdateLayout();
+        var fittedW = ActualWidth > 1 ? ActualWidth : width;
+        var fittedH = ActualHeight > 1 ? ActualHeight : height;
+        var fitted = ScreenPlace.ClearOf(anchorX - fittedW / 2, avoid.Top - fittedH - 12, fittedW, fittedH, avoid, work);
+        Left = fitted.X;
+        Top = fitted.Y;
     }
 
     [DllImport("user32.dll")] private static extern int GetWindowLong(IntPtr hwnd, int index);
