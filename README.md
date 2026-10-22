@@ -111,12 +111,12 @@ Asking about a fact that may have changed, such as the weather or the next publi
 
 Optional. Bluey can read his answers aloud on this PC with Supertonic 3. The voice stays on the computer. There is no cloud speech call.
 
-1. Install Python 3 if it is not already there.
-2. Run `py -3 -m pip install supertonic`.
+1. Install Python 3 if it is not already there. On the first page of the installer, turn on "Add python.exe to PATH".
+2. Double-click `Setup-Voice.cmd` in this folder. It looks for the same Python Bluey starts. If Supertonic is missing, it asks before installing it and downloading the voice, about 400 MB, into your user folder. If you say no, Bluey still runs and does not speak.
 3. Right-click the tray icon. Check **Speak replies**. Under **Voice sex**, choose **Male** or **Female**.
 4. **Test TTS voice (speak sample)** says a short line when the voice is ready. The tray line **TTS:** shows whether it is ready.
 
-The choice is written to `bluey.config.json` and loaded again every time Bluey starts. Male uses Supertonic voice M1. Female uses F1. The first spoken line downloads the model, about 400 MB, into your user cache.
+The same install by hand is `py -3 -m pip install supertonic`. The choice is written to `bluey.config.json` and loaded again every time Bluey starts. Male uses Supertonic voice M1. Female uses F1. The voice files stay in your user cache, not in this repo.
 
 `lang` in that file picks the spoken language. `na` lets the model handle mixed language. Other codes it accepts are `ar`, `bg`, `cs`, `da`, `de`, `el`, `en`, `es`, `et`, `fi`, `fr`, `hi`, `hr`, `hu`, `id`, `it`, `ja`, `ko`, `lt`, `lv`, `nl`, `pl`, `pt`, `ro`, `ru`, `sk`, `sl`, `sv`, `tr`, `uk`, and `vi`.
 
