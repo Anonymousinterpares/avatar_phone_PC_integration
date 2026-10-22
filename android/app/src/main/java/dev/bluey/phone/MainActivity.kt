@@ -201,6 +201,7 @@ class MainActivity : ComponentActivity() {
                     onAudioSettingsChanged = { en, q, m -> sendDesktopAudioSettings(en, q, m) },
                     onTestTts = { testTts() },
                     onToggleTts = { toggleTts() },
+                    onNoTouch = { setNoTouch(it) },
                 )
             }
         }
@@ -528,6 +529,7 @@ class MainActivity : ComponentActivity() {
         realtime = session.optBoolean("realtime")
         provider = session.optString("provider", "")
         route = session.optString("route", "")
+        ui = ui.copy(noTouch = session.optBoolean("noTouch"))
         if (!ui.awake) return
         if (realtime) startMic() else stopMic()
         ui = ui.copy(status = statusLine())
@@ -545,7 +547,12 @@ class MainActivity : ComponentActivity() {
             )
         }
         when (packet.optString("command")) {
-            "hello" -> if (!ui.awake) ui = ui.copy(status = "Connected to ${packet.optString("text", "the PC")}. Double-tap to wake.")
+            "hello" -> {
+                if (!ui.awake) ui = ui.copy(status = "Connected to ${packet.optString("text", "the PC")}. Double-tap to wake.")
+                work.execute {
+                    try { link.send("session", "") } catch (_: Exception) { }
+                }
+            }
             "wake" -> if (!ui.awake) wake()
             "sleep" -> if (ui.awake) sleep()
             "stop" -> {
@@ -914,6 +921,14 @@ class MainActivity : ComponentActivity() {
         if (!link.connected) return
         work.execute {
             try { link.send("ttsTest", "Testing Supertonic 3 text to speech. Bluey audio is working.") } catch (_: Exception) { }
+        }
+    }
+
+    private fun setNoTouch(enabled: Boolean) {
+        ui = ui.copy(noTouch = enabled)
+        if (!link.connected) return
+        work.execute {
+            try { link.send("noTouch", if (enabled) "true" else "false") } catch (_: Exception) { }
         }
     }
 

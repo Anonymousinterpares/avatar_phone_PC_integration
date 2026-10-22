@@ -28,6 +28,7 @@ public sealed class TrayApp : IDisposable
     private readonly NotifyIcon _icon;
     private readonly Icon _iconImage;
     private readonly ToolStripMenuItem _modeItem;
+    private ToolStripMenuItem _noTouchItem = null!;
 
     private readonly Action _allowHelp;
     private readonly Action _helpSomeone;
@@ -139,6 +140,14 @@ public sealed class TrayApp : IDisposable
         menu.Items.Add("Continue with ChatGPT", null, async (_, _) => await SignInAsync(returning: _settings.ChatGpt?.ClientId.Length > 0));
         menu.Items.Add("Sign out of ChatGPT", null, async (_, _) => await SignOutAsync());
         menu.Items.Add(new ToolStripSeparator());
+        _noTouchItem = new ToolStripMenuItem("No touch") { Checked = _settings.NoTouch, CheckOnClick = true };
+        _noTouchItem.CheckedChanged += (_, _) =>
+        {
+            if (_noTouchItem.Checked == _settings.NoTouch) return;
+            _settings.NoTouch = _noTouchItem.Checked;
+            _store.Save(_settings);
+            _ = _phones.BroadcastAsync(Packet.Of("session", _session.SessionJson()));
+        };
         var control = new ToolStripMenuItem("Let him use the computer") { Checked = _settings.ComputerControl, CheckOnClick = true };
         control.CheckedChanged += (_, _) =>
         {
@@ -147,6 +156,7 @@ public sealed class TrayApp : IDisposable
             _ = _phones.BroadcastAsync(Packet.Of("session", _session.SessionJson()));
         };
         menu.Items.Add(control);
+        menu.Items.Add(_noTouchItem);
         var hints = new ToolStripMenuItem("Show usage hints") { Checked = _settings.UsageHints, CheckOnClick = true };
         hints.CheckedChanged += (_, _) =>
         {
@@ -259,6 +269,12 @@ public sealed class TrayApp : IDisposable
     {
         _settings.PhoneSeat = seat;
         _store.Save(_settings);
+    }
+
+    public void ShowNoTouch(bool enabled)
+    {
+        if (_noTouchItem.Checked == enabled) return;
+        _noTouchItem.Checked = enabled;
     }
 
     private void ShowAvatar()

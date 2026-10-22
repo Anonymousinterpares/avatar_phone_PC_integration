@@ -183,6 +183,7 @@ public sealed class UsageHintsWindow : Window
         ("Use the computer", new[]
         {
             "Turn on “Let him use the computer” in the tray first. Until then he can look and point, and he will not click.",
+            "No touch, on the tray or the phone, lets him describe the screen only. He will not move the mouse, click, or type.",
             "“Open Notepad.” “Open Chrome.” “Open github.com.”",
             "“Click Save.” “Double-click that file.” “Right-click this.”",
             "“Type hello and press enter.” “Press ctrl+t.” “Scroll down.” “Drag this onto the desktop.”",

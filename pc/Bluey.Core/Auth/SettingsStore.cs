@@ -128,6 +128,7 @@ public sealed class AppSettings
 {
     public BrainMode Mode { get; set; } = BrainMode.XaiLive;
     public bool ComputerControl { get; set; }
+    public bool NoTouch { get; set; }
     public bool UsageHints { get; set; } = true;
     public string PhoneSeat { get; set; } = "center";
     public string BerrySize { get; set; } = "large";

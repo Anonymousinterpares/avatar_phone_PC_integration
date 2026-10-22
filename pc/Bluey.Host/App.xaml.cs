@@ -341,6 +341,16 @@ public partial class App : System.Windows.Application
                     else _speaker!.Stop();
                     BroadcastTtsStatus();
                     return new Packet { Command = "ttsStatus", Text = GetTtsStatusJson(), CallId = packet.CallId };
+                case "noTouch":
+                {
+                    var enabled = packet.Text is "true" or "1";
+                    settings.NoTouch = enabled;
+                    store.Save(settings);
+                    var json = _session!.SessionJson();
+                    _ = Dispatcher.BeginInvoke(() => _tray?.ShowNoTouch(enabled));
+                    _ = _phones!.BroadcastAsync(Packet.Of("session", json));
+                    return Packet.Of("session", json, packet.CallId);
+                }
                 case "ttsSet":
                     if (packet.Text == "true" || packet.Text == "1") speech.Current.TextToSpeech = true;
                     else if (packet.Text == "false" || packet.Text == "0") speech.Current.TextToSpeech = false;

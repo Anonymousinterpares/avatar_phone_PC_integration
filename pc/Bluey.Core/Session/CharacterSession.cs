@@ -84,6 +84,7 @@ public sealed class CharacterSession
             provider,
             route = settings.Mode == BrainMode.OpenRouter ? OpenRouterModels.RouteLabel(settings.OpenRouterModel, settings.OpenRouterProvider) : "",
             computerControl = settings.ComputerControl,
+            noTouch = settings.NoTouch,
         });
     }
 
@@ -100,6 +101,8 @@ public sealed class CharacterSession
     {
         switch (packet.Command)
         {
+            case "session":
+                return Packet.Of("session", SessionJson(), packet.CallId);
             case "awake":
                 Awake = true;
                 return Packet.Of("session", SessionJson(), packet.CallId);
@@ -212,6 +215,7 @@ public sealed class CharacterSession
                     Jpeg = jpeg,
                     ScreenText = screen,
                     ComputerControl = settings.ComputerControl,
+                    NoTouch = settings.NoTouch,
                     SpeakAloud = _speaker?.Enabled == true,
                 }, cancellationToken);
                 if (!string.IsNullOrWhiteSpace(reply.Text))
@@ -320,7 +324,7 @@ public sealed class CharacterSession
     {
         var settings = _brains.Settings;
         var stopped = DateTimeOffset.UtcNow < StoppedUntil;
-        var refusal = ActionGuard.Refusal(name, settings.ComputerControl, stopped, arguments);
+        var refusal = ActionGuard.Refusal(name, settings.ComputerControl, stopped, arguments, settings.NoTouch);
         if (refusal != null) return new ToolRun { Text = refusal };
 
         switch (name)

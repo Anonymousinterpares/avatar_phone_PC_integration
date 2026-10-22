@@ -143,9 +143,11 @@ public static class ActionGuard
         "win+l", "meta+l", "super+l", "ctrl+alt+delete", "ctrl+alt+del", "control+alt+delete",
     };
 
-    public static string? Refusal(string name, bool computerControl, bool stopped, string argumentsJson)
+    public static string? Refusal(string name, bool computerControl, bool stopped, string argumentsJson, bool noTouch = false)
     {
         if (!ActionNames.Contains(name)) return null;
+        if (noTouch)
+            return "No-touch is on. Look at the screen and describe it. Do not move the mouse, click, type, or change anything.";
         if (!computerControl)
             return "The user has turned off computer control. You can still look and point.";
         if (stopped)

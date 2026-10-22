@@ -99,6 +99,7 @@ data class Ui(
     val helpMode: Boolean = false,
     val helpControl: Boolean = false,
     val helpAsking: Boolean = false,
+    val noTouch: Boolean = false,
 )
 
 private val Berry1 = Color(0xFFA9BCFF)
@@ -124,6 +125,7 @@ fun BlueyScreen(
     onAudioSettingsChanged: (enabled: Boolean, quality: String, mutePc: Boolean) -> Unit = { _, _, _ -> },
     onTestTts: () -> Unit = {},
     onToggleTts: () -> Unit = {},
+    onNoTouch: (Boolean) -> Unit = {},
 ) {
     var typingOpen by remember { mutableStateOf(false) }
     var soundSettingsOpen by remember { mutableStateOf(false) }
@@ -189,6 +191,25 @@ fun BlueyScreen(
             fontSize = 13.sp,
         )
         HoldButton(ui = ui, onHoldStart = onHoldStart, onHoldEnd = onHoldEnd)
+        if (ui.connected) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(Color(0xFF1E1B2E), RoundedCornerShape(12.dp))
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
+                    Text("No touch", color = Color.White, fontSize = 15.sp)
+                    Text(
+                        "He only describes the screen. He will not click or type.",
+                        color = Color(0xFFB9B2CC),
+                        fontSize = 12.sp,
+                    )
+                }
+                Switch(checked = ui.noTouch, onCheckedChange = onNoTouch)
+            }
+        }
         if (ui.awake) {
             Button(onClick = { typingOpen = !typingOpen }, modifier = Modifier.fillMaxWidth()) {
                 Text(if (typingOpen) "Close typing" else "Manual typing")

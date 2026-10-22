@@ -105,6 +105,8 @@ With it on, you can ask him to open an app or a site, click, type, press a short
 
 **Ctrl+Alt+S** stops him and sends him home.
 
+**No touch**, on the tray or on the phone, is for when you are away from the computer and only want to hear what is on the screen. He can look and point at what he describes. He will not move the Windows mouse, click, type, scroll, or open anything. The two switches stay in step, and the choice is remembered on this PC. Turn it off when you want him to use the computer again. **Let him use the computer** still has to be on for that.
+
 Asking about a fact that may have changed, such as the weather or the next public holiday, uses web search in the background. It does not open a browser. **Web search** in **Sign in and keys…** starts on the same provider as **Mode**. Change it and click **Save** to keep another provider. That choice is stored in `%AppData%\Bluey\web-search.json` and loaded again next time. OpenRouter searches with its own web tool and the OpenRouter key. Grok, OpenAI, and a ChatGPT plan sign-in use their own search. Claude and Cerebras do not search.
 
 ## Spoken replies
@@ -137,6 +139,7 @@ Right-click the tray icon for the rest:
 | **Sign in and keys…** | Picks Grok, OpenAI, ChatGPT plan, Claude, Cerebras, or OpenRouter, and stores the key. |
 | **Continue with ChatGPT** | Browser sign-in for the ChatGPT plan. |
 | **Let him use the computer** | Allows clicks, typing, and the other computer actions. |
+| **No touch** | He only describes what is on the screen. The same switch is on the phone. |
 | **Show usage hints** | Opens a short panel of the same talk and pointing examples. |
 | **Speak replies** and **Voice sex** | Reads one marked line aloud. |
 | **Avatar…** | Size (large is the biggest), walk speed at 100%, 150%, or 200%, walk or teleport, which corner he sleeps in, and whether a reply sits in the caption bar or a comic-book cloud. |

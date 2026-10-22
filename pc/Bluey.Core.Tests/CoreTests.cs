@@ -253,6 +253,12 @@ public class CoreTests
         Assert.Null(ActionGuard.Refusal("press_keys", true, false, "{\"keys\":\"ctrl+t\"}"));
         Assert.Contains("turned off", ActionGuard.Refusal("click", false, false, "{}")!, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("stop", ActionGuard.Refusal("click", true, true, "{}")!, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("No-touch", ActionGuard.Refusal("click", true, false, "{}", noTouch: true)!, StringComparison.OrdinalIgnoreCase);
+        Assert.Null(ActionGuard.Refusal("look_at_screen", true, false, "{}", noTouch: true));
+        var handsOff = Personality.Instructions(true, noTouch: true);
+        Assert.Contains("No-touch is on", handsOff);
+        Assert.DoesNotContain("open_url", handsOff);
+        Assert.DoesNotContain(ToolCatalog.OpenAiTools(true, noTouch: true), tool => (string)tool["name"]! == "click");
     }
 
     [Fact]
