@@ -134,6 +134,7 @@ public sealed class AppSettings
     public int BerrySpeed { get; set; } = 100;
     public bool BerryTeleport { get; set; }
     public string BerrySleepCorner { get; set; } = "bottom-right";
+    public string BerryBubble { get; set; } = "bar";
     public string HostId { get; set; } = "urn:uuid:" + Guid.NewGuid().ToString();
     public string OpenAiApiKey { get; set; } = "";
     public string XaiApiKey { get; set; } = "";
@@ -212,6 +213,7 @@ public sealed class SettingsStore
         settings.BerrySpeed = settings.BerrySpeed is 150 or 200 ? settings.BerrySpeed : 100;
         settings.BerrySleepCorner = settings.BerrySleepCorner is "bottom-left" or "top-left" or "top-right" or "bottom-right"
             ? settings.BerrySleepCorner : "bottom-right";
+        settings.BerryBubble = settings.BerryBubble == "comic" ? "comic" : "bar";
         return settings;
     }
 

@@ -38,7 +38,7 @@ public partial class App : System.Windows.Application
         var http = new HttpClient { Timeout = TimeSpan.FromMinutes(3) };
         var brains = new BrainClient(http, store);
         _overlay = new CursorOverlay();
-        _overlay.Configure(settings.BerrySize, settings.BerrySpeed, settings.BerryTeleport, settings.BerrySleepCorner);
+        _overlay.Configure(settings.BerrySize, settings.BerrySpeed, settings.BerryTeleport, settings.BerrySleepCorner, settings.BerryBubble);
         _overlay.Show();
         var desk = new WindowsDesk(() => store.Load().ComputerControl, visible => _overlay.SetVisible(visible));
         _speaker = new SupertonicSpeaker(speech);

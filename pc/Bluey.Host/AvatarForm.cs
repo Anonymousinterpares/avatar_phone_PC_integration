@@ -4,13 +4,14 @@ using Bluey.Auth;
 
 namespace Bluey.Host;
 
-/// <summary>Size, speed, teleport, and where he sleeps. Dark, like the help bar.</summary>
+/// <summary>Size, speed, teleport, sleep corner, and how replies are drawn. Dark, like the help bar.</summary>
 public sealed class AvatarForm : Form
 {
     private readonly ComboBox _size = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 220 };
     private readonly ComboBox _speed = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 220 };
     private readonly ComboBox _move = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 220 };
     private readonly ComboBox _sleep = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 220 };
+    private readonly ComboBox _bubble = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 220 };
 
     public AvatarForm(AppSettings settings)
     {
@@ -22,7 +23,7 @@ public sealed class AvatarForm : Form
         BackColor = Color.FromArgb(28, 32, 52);
         ForeColor = Color.FromArgb(244, 246, 255);
         Font = new Font("Segoe UI", 10f);
-        ClientSize = new Size(420, 280);
+        ClientSize = new Size(440, 340);
         _size.Items.AddRange(new object[] { "Small", "Medium", "Large" });
         _size.SelectedIndex = settings.BerrySize switch { "small" => 0, "medium" => 1, _ => 2 };
         _speed.Items.AddRange(new object[] { "100%", "150%", "200%" });
@@ -37,7 +38,9 @@ public sealed class AvatarForm : Form
             "top-left" => 3,
             _ => 0,
         };
-        foreach (var box in new[] { _size, _speed, _move, _sleep })
+        _bubble.Items.AddRange(new object[] { "Caption bar", "Comic cloud" });
+        _bubble.SelectedIndex = settings.BerryBubble == "comic" ? 1 : 0;
+        foreach (var box in new[] { _size, _speed, _move, _sleep, _bubble })
         {
             box.BackColor = Color.FromArgb(18, 20, 34);
             box.ForeColor = Color.White;
@@ -49,12 +52,13 @@ public sealed class AvatarForm : Form
             Padding = new Padding(16),
             ColumnCount = 2,
         };
-        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 130));
+        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 156));
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         Add(layout, "Size", _size);
         Add(layout, "Move speed", _speed);
         Add(layout, "Movement", _move);
         Add(layout, "Sleeps at", _sleep);
+        Add(layout, "Output bubble", _bubble);
         var buttons = new FlowLayoutPanel
         {
             FlowDirection = FlowDirection.RightToLeft,
@@ -85,6 +89,7 @@ public sealed class AvatarForm : Form
                 3 => "top-left",
                 _ => "bottom-right",
             };
+            settings.BerryBubble = _bubble.SelectedIndex == 1 ? "comic" : "bar";
         };
     }
 

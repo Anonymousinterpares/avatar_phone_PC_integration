@@ -266,7 +266,7 @@ public sealed class TrayApp : IDisposable
         using var form = new AvatarForm(_settings);
         if (form.ShowDialog() != DialogResult.OK) return;
         _store.Save(_settings);
-        _overlay.Configure(_settings.BerrySize, _settings.BerrySpeed, _settings.BerryTeleport, _settings.BerrySleepCorner);
+        _overlay.Configure(_settings.BerrySize, _settings.BerrySpeed, _settings.BerryTeleport, _settings.BerrySleepCorner, _settings.BerryBubble);
     }
 
     private void ShowBerryTalk()
@@ -279,11 +279,9 @@ public sealed class TrayApp : IDisposable
             _talkWindow.Closed += (_, _) => _talkWindow = null;
         }
         if (!_talkWindow.IsVisible)
-        {
-            _talkWindow.Left = _overlay.Left + 150;
-            _talkWindow.Top = _overlay.Top;
-        }
-        _talkWindow.Show();
+            _overlay.PlaceNearBerry(_talkWindow);
+        else
+            _talkWindow.Show();
         _talkWindow.Activate();
         _talkWindow.FocusInput();
     }

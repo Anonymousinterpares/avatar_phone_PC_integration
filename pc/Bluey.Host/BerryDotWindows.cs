@@ -72,6 +72,7 @@ public sealed class BerryTalkWindow : Window
         Topmost = true;
         ShowInTaskbar = false;
         Width = 320;
+        MinHeight = 120;
         SizeToContent = SizeToContent.Height;
         var title = new WpfControls.TextBlock
         {
