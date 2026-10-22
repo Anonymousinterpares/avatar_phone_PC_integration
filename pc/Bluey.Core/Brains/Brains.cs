@@ -85,7 +85,11 @@ public static class Personality
 
     You may add one hidden pose tag to a reply when it fits the moment, and not on ordinary answers. The user never sees it. Write [[act:wave]], [[act:greet]], [[act:hop]], [[act:cheer]], [[act:laugh]], [[act:wink]], [[act:yawn]], [[act:sneeze]], [[act:point]], [[act:sad]], [[act:surprise]], [[act:love]], [[act:confused]], or [[act:huff]]. One tag at most. Leave it out while you are still calling tools.
 
-    You see a screenshot only after look_at_screen or after an action. That picture stays with the turn that took it for 90 seconds, then only a one-line note remains. Use the stored picture when the user is talking about what just happened. It is not a live view. Call look_at_screen again before clicking if it may be out of date, when you have no picture, and when they say "this", "that", or "here". Read the names in the picture, including lists. The text dump often misses custom-drawn apps such as Spotify, so a missing line does not mean the row is absent. Never say an app, playlist, or row is missing while the picture still shows it. If the user says you picked the wrong item, click the matching visible name. Do not search up a public substitute while their own list is in the picture.
+    You see a screenshot only after look_at_screen. That picture stays with the turn that took it for 90 seconds, then only a one-line note remains. Use the stored picture when the user is talking about what just happened. It is not a live view. Call look_at_screen again when it may be out of date, when you have no picture, and when they say "this", "that", or "here". Read the names in the picture, including lists. The text dump often misses custom-drawn apps such as Spotify, so a missing line does not mean the row is absent. Never say an app, playlist, or row is missing while the picture still shows it.
+    """;
+
+    public const string ScreenActions = """
+    Call look_at_screen again before an action if the picture may be out of date. If the user says you picked the wrong item, choose the matching visible name. Do not search up a public substitute while their own list is in the picture.
     """;
 
     public const string Computer = """
@@ -95,7 +99,7 @@ public static class Personality
     """;
 
     public const string NoTouchMode = """
-    No-touch is on. The user is away from the computer and wants to know what is happening on the screen. Call look_at_screen, then describe it. You may point at the part you are talking about. That pointer is yours, not the Windows mouse. You cannot move the mouse, click, type, scroll, drag, press keys, or open anything. Ignore any earlier line that tells you to click or change the computer. Do not try.
+    No-touch is on. The user is away from the computer and wants to know what is happening on the screen. Call look_at_screen, then describe it. You may point at the part you are talking about. That pointer is yours, not the Windows mouse. If the user asks you to change the computer or do a task on it, do not try. Tell them plainly that no-touch mode is on, so you cannot do that task. Do not answer with only a description of the screen.
     """;
 
     public const string Spoken = """
@@ -109,21 +113,12 @@ public static class Personality
                 "You never speak out loud: your replies pop up as a tiny speech bubble, so keep them to one short line, under fifteen words.",
                 "Your replies are spoken aloud to the user and pop up in a speech bubble, so keep them to one short line, under fifteen words.")
             : Base;
-        var text = noTouch ? basePrompt + "\n\n" + NoTouchMode
-            : computerControl ? basePrompt + "\n\n" + Computer
-            : basePrompt;
+        var text = basePrompt;
+        if (noTouch) text += "\n\n" + NoTouchMode;
+        else if (computerControl) text += "\n\n" + ScreenActions + "\n\n" + Computer + "\n\nNo-touch is off.";
+        else text += "\n\nNo-touch is off. Look and point.";
         if (speakAloud) text += "\n\n" + Spoken;
-        text += "\n\n" + TouchLine(noTouch, computerControl);
         return text;
-    }
-
-    private static string TouchLine(bool noTouch, bool computerControl)
-    {
-        if (noTouch)
-            return "No-touch is ON. Do not call click, type_text, press_keys, scroll, drag, open_app, or open_url. Those commands are off. Look at the screen and answer. Do not try a computer command.";
-        if (!computerControl)
-            return "No-touch is OFF. Computer control is also off, so do not call click, type_text, press_keys, scroll, drag, open_app, or open_url. Look and point only.";
-        return "No-touch is OFF. You may call click, type_text, press_keys, scroll, drag, open_app, and open_url when the user asks you to.";
     }
 }
 
@@ -176,7 +171,7 @@ public static class ToolCatalog
         {
             ["type"] = "function",
             ["name"] = tool.Name,
-            ["description"] = tool.Description,
+            ["description"] = LookDescription(tool.Name, tool.Description, noTouch),
             ["parameters"] = JsonSerializer.Deserialize<JsonElement>(tool.Parameters),
         }).ToList();
         if (!computerControl || noTouch) return tools;
@@ -189,6 +184,11 @@ public static class ToolCatalog
         }));
         return tools;
     }
+
+    private static string LookDescription(string name, string description, bool noTouch) =>
+        noTouch && name == "look_at_screen"
+            ? "Take a fresh look at the user's screen. Returns the frontmost app, its text, and a screenshot. Call this before you describe the screen, and again whenever it may have changed."
+            : description;
 
     public static List<Dictionary<string, object>> ChatTools(bool computerControl, bool noTouch = false)
     {
@@ -211,7 +211,7 @@ public static class ToolCatalog
         return all.Select(tool => new Dictionary<string, object>
         {
             ["name"] = tool.Name,
-            ["description"] = tool.Description,
+            ["description"] = LookDescription(tool.Name, tool.Description, noTouch),
             ["input_schema"] = JsonSerializer.Deserialize<JsonElement>(tool.Parameters),
         }).ToList();
     }

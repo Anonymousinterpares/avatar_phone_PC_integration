@@ -256,10 +256,27 @@ public class CoreTests
         Assert.Contains("No-touch", ActionGuard.Refusal("click", true, false, "{}", noTouch: true)!, StringComparison.OrdinalIgnoreCase);
         Assert.Null(ActionGuard.Refusal("look_at_screen", true, false, "{}", noTouch: true));
         var handsOff = Personality.Instructions(true, noTouch: true);
-        Assert.Contains("No-touch is ON", handsOff);
-        Assert.Contains("Do not try a computer command", handsOff);
+        Assert.Contains("No-touch is on", handsOff);
+        Assert.DoesNotContain("click", handsOff, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("type_text", handsOff);
+        Assert.DoesNotContain("open_url", handsOff);
         Assert.DoesNotContain("You can also use the computer", handsOff);
-        Assert.Contains("No-touch is OFF", Personality.Instructions(true));
+        Assert.Contains("click", Personality.Instructions(true), StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("No-touch is off", Personality.Instructions(true));
+        Assert.Equal("Done.", TaskOutcome.Fallback(false, true, false, null));
+        Assert.Equal("Here's what is on the screen.", TaskOutcome.Fallback(false, false, true, null));
+        Assert.Equal("That didn't work.", TaskOutcome.Fallback(true, true, false, "  "));
+        Assert.Equal("No target.", TaskOutcome.Fallback(true, true, false, "No target.\nmore"));
+        Assert.True(TaskOutcome.WantsComputerWork("Open Notepad"));
+        Assert.True(TaskOutcome.WantsComputerWork("click Save"));
+        Assert.False(TaskOutcome.WantsComputerWork("what's on the screen"));
+        Assert.False(TaskOutcome.WantsComputerWork("what's open"));
+        Assert.True(TaskOutcome.MentionsNoTouch("No-touch mode is on, so I can't."));
+        Assert.False(TaskOutcome.MentionsNoTouch("Here's what is on the screen."));
+        Assert.Equal("sad", TaskOutcome.Pose(true, 3));
+        Assert.Equal("win_hop", TaskOutcome.Pose(false, 0));
+        Assert.Equal("win_star", TaskOutcome.Pose(false, 9));
+        Assert.Equal(10, TaskOutcome.Wins.Length);
         Assert.DoesNotContain(ToolCatalog.OpenAiTools(true, noTouch: true), tool => (string)tool["name"]! == "click");
     }
 

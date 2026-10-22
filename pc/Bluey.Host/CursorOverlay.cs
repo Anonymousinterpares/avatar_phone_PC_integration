@@ -14,6 +14,9 @@ public sealed class CursorOverlay : Window
     private readonly WpfControls.TextBlock _caption;
     private readonly DispatcherTimer _timer;
     private readonly DispatcherTimer _captionTimer;
+    private readonly Queue<string> _captionQueue = new();
+    private DateTime _captionShownAt;
+    private bool _captionHolding;
     private readonly WpfControls.Grid _berry;
     private readonly WpfControls.Image _sprite;
     private readonly BerryFilm? _film;
@@ -166,13 +169,8 @@ public sealed class CursorOverlay : Window
         Content = root;
         _timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(16) };
         _timer.Tick += (_, _) => Step();
-        _captionTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(12) };
-        _captionTimer.Tick += (_, _) =>
-        {
-            _captionTimer.Stop();
-            _captionText = "";
-            ShowCaption();
-        };
+        _captionTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(4) };
+        _captionTimer.Tick += (_, _) => AdvanceCaption();
         SourceInitialized += (_, _) => ApplyPointerStyle();
         Loaded += (_, _) =>
         {
@@ -191,12 +189,75 @@ public sealed class CursorOverlay : Window
     {
         Dispatcher.Invoke(() =>
         {
-            _captionTimer.Stop();
-            _captionText = string.IsNullOrWhiteSpace(text) ? "" : text.Length > 280 ? text[..280] : text;
-            ShowCaption();
-            if (_captionText.Length > 0) _captionTimer.Start();
+            var next = string.IsNullOrWhiteSpace(text) ? "" : text.Length > 280 ? text[..280] : text;
+            if (_captionText.Length == 0)
+            {
+                PresentCaption(next);
+                return;
+            }
+            if (next == _captionText && _captionQueue.Count == 0) return;
+            if (ExtendsCaption(_captionText, next))
+            {
+                _captionText = next;
+                ShowCaption();
+                return;
+            }
+            if (_captionQueue.Count > 0 && _captionQueue.Last() == next) return;
+            var age = DateTime.UtcNow - _captionShownAt;
+            if (age >= TimeSpan.FromSeconds(4) && _captionQueue.Count == 0)
+            {
+                PresentCaption(next);
+                return;
+            }
+            _captionQueue.Enqueue(next);
         });
     }
+
+    private void PresentCaption(string text)
+    {
+        _captionText = text;
+        _captionShownAt = DateTime.UtcNow;
+        ShowCaption();
+        _captionTimer.Stop();
+        if (text.Length == 0)
+        {
+            _captionHolding = false;
+            if (_captionQueue.Count > 0) PresentCaption(_captionQueue.Dequeue());
+            return;
+        }
+        _captionHolding = true;
+        _captionTimer.Interval = TimeSpan.FromSeconds(4);
+        _captionTimer.Start();
+    }
+
+    private void AdvanceCaption()
+    {
+        _captionTimer.Stop();
+        if (_captionHolding)
+        {
+            _captionHolding = false;
+            if (_captionQueue.Count > 0)
+            {
+                PresentCaption(_captionQueue.Dequeue());
+                return;
+            }
+            var left = 12 - (DateTime.UtcNow - _captionShownAt).TotalSeconds;
+            if (left <= 0.05)
+            {
+                PresentCaption("");
+                return;
+            }
+            _captionTimer.Interval = TimeSpan.FromSeconds(left);
+            _captionTimer.Start();
+            return;
+        }
+        if (_captionQueue.Count > 0) PresentCaption(_captionQueue.Dequeue());
+        else PresentCaption("");
+    }
+
+    private static bool ExtendsCaption(string current, string next) =>
+        current.Length > 0 && next.Length > 0 &&
+        (next.StartsWith(current, StringComparison.Ordinal) || current.StartsWith(next, StringComparison.Ordinal));
 
     public void PointAt(PointD? point)
     {
@@ -379,7 +440,12 @@ public sealed class CursorOverlay : Window
 
     public void PlayPose(string name) => Dispatcher.Invoke(() =>
     {
-        if (_film == null || !_film.Clips.ContainsKey(name)) return;
+        if (_film == null) return;
+        if (!_film.Clips.ContainsKey(name))
+        {
+            if (!name.StartsWith("win_", StringComparison.Ordinal) || !_film.Clips.ContainsKey("cheer")) return;
+            name = "cheer";
+        }
         _pose = name;
         _posePlaying = true;
         _act = "pose";

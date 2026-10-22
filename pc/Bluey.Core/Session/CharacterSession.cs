@@ -14,6 +14,57 @@ public sealed class ToolRun
     public byte[]? Jpeg { get; init; }
     public string? AppName { get; init; }
     public bool GoToSleep { get; init; }
+    public bool Ok { get; init; } = true;
+}
+
+public static class TaskOutcome
+{
+    public static readonly string[] Wins =
+    [
+        "win_hop", "win_bow", "win_spin", "win_stretch", "win_dab",
+        "win_wiggle", "win_puff", "win_kick", "win_nod", "win_star",
+    ];
+
+    public static string Pose(bool failed, int spin) => failed ? "sad" : Wins[Math.Abs(spin) % Wins.Length];
+
+    public const string NoTouchBlock = "No-touch mode is on, so I can't do that.";
+
+    public static string Fallback(bool failed, bool acted, bool looked, string? problem)
+    {
+        if (!failed) return acted ? "Done." : looked ? "Here's what is on the screen." : "Done.";
+        var line = FirstLine(problem);
+        return string.IsNullOrWhiteSpace(line) ? "That didn't work." : line;
+    }
+
+    public static bool WantsComputerWork(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return false;
+        var t = text.Trim().ToLowerInvariant();
+        string[] phrases =
+        [
+            "click", "double-click", "double click", "right-click", "right click",
+            "type ", "press ", "scroll", "drag", "launch", "delete",
+            "move the mouse", "move mouse", "switch to", "switch the",
+            "open ", "close ", "shut ",
+        ];
+        foreach (var phrase in phrases)
+            if (t.Contains(phrase, StringComparison.Ordinal)) return true;
+        return false;
+    }
+
+    public static bool MentionsNoTouch(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return false;
+        var t = text.ToLowerInvariant();
+        return t.Contains("no-touch", StringComparison.Ordinal) || t.Contains("no touch", StringComparison.Ordinal);
+    }
+
+    private static string FirstLine(string? problem)
+    {
+        if (string.IsNullOrWhiteSpace(problem)) return "";
+        var line = problem.Split('\n')[0].Trim();
+        return line.Length > 160 ? line[..160] : line;
+    }
 }
 
 public sealed class CharacterSession
@@ -24,6 +75,7 @@ public sealed class CharacterSession
     private readonly List<HistoryTurn> _history = new();
     private ScreenCapture? _shot;
     private readonly object _gate = new();
+    private int _win;
 
     public CharacterSession(BrainClient brains, IDesk desk, IReplySpeaker? speaker = null)
     {
@@ -194,6 +246,10 @@ public sealed class CharacterSession
         string? seenApp = null;
         string finalText = "";
         var slept = false;
+        var acted = false;
+        var failed = false;
+        var looked = false;
+        string? problem = null;
         List<HistoryTurn> history;
         lock (_gate)
         {
@@ -228,6 +284,16 @@ public sealed class CharacterSession
                 foreach (var call in reply.ToolCalls)
                 {
                     var run = await RunToolAsync(call.Name, call.ArgumentsJson, cancellationToken);
+                    if (ActionGuard.ActionNames.Contains(call.Name))
+                    {
+                        acted = true;
+                        if (!run.Ok)
+                        {
+                            failed = true;
+                            problem ??= run.Text;
+                        }
+                    }
+                    if (run.Jpeg != null) looked = true;
                     prior.Add(new CompletedTool(call.CallId, call.Name, call.ArgumentsJson, run.Text));
                     if (run.Jpeg != null)
                     {
@@ -248,6 +314,8 @@ public sealed class CharacterSession
         }
         catch (Exception ex)
         {
+            failed = true;
+            problem ??= ex.Message;
             finalText = ex.Message;
             await ShowAsync(push, ex.Message, done: true);
         }
@@ -255,11 +323,23 @@ public sealed class CharacterSession
         {
             Busy(false);
         }
-        if (string.IsNullOrWhiteSpace(finalText))
+        var stopped = DateTimeOffset.UtcNow < StoppedUntil;
+        var blocked = settings.NoTouch && (TaskOutcome.WantsComputerWork(userText) || (acted && failed));
+        if (blocked) failed = true;
+        if (!slept && !stopped && blocked && !TaskOutcome.MentionsNoTouch(finalText))
         {
-            finalText = "...";
+            var why = TaskOutcome.NoTouchBlock;
+            finalText = string.IsNullOrWhiteSpace(finalText) ? why : finalText.TrimEnd() + " " + why;
+            await ShowAsync(push, why, done: true);
+        }
+        else if (string.IsNullOrWhiteSpace(finalText) && !slept)
+        {
+            if (!acted && !looked) failed = true;
+            finalText = stopped ? "Stopped." : TaskOutcome.Fallback(failed, acted, looked, problem);
             await ShowAsync(push, finalText, done: true);
         }
+        if (!slept && !stopped)
+            PoseRequested?.Invoke(TaskOutcome.Pose(failed, _win++));
         var drop = slept || DateTimeOffset.UtcNow < StoppedUntil;
         lock (_gate)
         {
@@ -325,7 +405,7 @@ public sealed class CharacterSession
         var settings = _brains.Settings;
         var stopped = DateTimeOffset.UtcNow < StoppedUntil;
         var refusal = ActionGuard.Refusal(name, settings.ComputerControl, stopped, arguments, settings.NoTouch);
-        if (refusal != null) return new ToolRun { Text = refusal };
+        if (refusal != null) return new ToolRun { Text = refusal, Ok = false };
 
         switch (name)
         {
@@ -378,12 +458,14 @@ public sealed class CharacterSession
             {
                 var app = ActionGuard.ReadString(arguments, "name");
                 var opened = await _desk.OpenAppAsync(app, cancellationToken);
-                return await LookAsync(opened, cancellationToken);
+                var run = await LookAsync(opened, cancellationToken);
+                return opened.StartsWith("Opened ", StringComparison.Ordinal) ? run : new ToolRun { Text = run.Text, ImageBase64 = run.ImageBase64, Jpeg = run.Jpeg, AppName = run.AppName, Ok = false };
             }
             case "open_url":
             {
                 var opened = _desk.OpenUrl(ActionGuard.ReadString(arguments, "url"));
-                return await LookAsync(opened, cancellationToken);
+                var run = await LookAsync(opened, cancellationToken);
+                return opened.StartsWith("Opened ", StringComparison.Ordinal) ? run : new ToolRun { Text = run.Text, ImageBase64 = run.ImageBase64, Jpeg = run.Jpeg, AppName = run.AppName, Ok = false };
             }
             default:
                 return new ToolRun { Text = "Unknown tool " + name + "." };
@@ -425,7 +507,7 @@ public sealed class CharacterSession
     private async Task<ToolRun> ClickAsync(string arguments, CancellationToken cancellationToken)
     {
         if (!TrySpot(arguments, "target_id", "x", "y", out var point, out var label))
-            return new ToolRun { Text = "Tell me what to click: a target id, or x and y." };
+            return new ToolRun { Text = "Tell me what to click: a target id, or x and y.", Ok = false };
         PointChanged?.Invoke(point);
         var right = ActionGuard.ReadBool(arguments, "right");
         var count = ActionGuard.ReadBool(arguments, "double") ? 2 : 1;
@@ -438,9 +520,9 @@ public sealed class CharacterSession
     private async Task<ToolRun> TypeAsync(string arguments, CancellationToken cancellationToken)
     {
         var text = ActionGuard.ReadString(arguments, "text");
-        if (text.Length == 0) return new ToolRun { Text = "Nothing to type." };
+        if (text.Length == 0) return new ToolRun { Text = "Nothing to type.", Ok = false };
         if (_desk.FocusedFieldIsPassword())
-            return new ToolRun { Text = "That's a password field. Ask the user to type it themselves." };
+            return new ToolRun { Text = "That's a password field. Ask the user to type it themselves.", Ok = false };
         await _desk.TypeAsync(text, chunk =>
         {
             CaptionChanged?.Invoke(chunk);
@@ -489,7 +571,7 @@ public sealed class CharacterSession
     {
         if (!TrySpot(arguments, "from_id", "from_x", "from_y", out var from, out _) ||
             !TrySpot(arguments, "to_id", "to_x", "to_y", out var to, out _))
-            return new ToolRun { Text = "Tell me where to drag from and to." };
+            return new ToolRun { Text = "Tell me where to drag from and to.", Ok = false };
         PointChanged?.Invoke(from);
         await _desk.DragAsync(from, to, cancellationToken);
         PointChanged?.Invoke(to);
