@@ -139,6 +139,7 @@ Right-click the tray icon for the rest:
 | **Let him use the computer** | Allows clicks, typing, and the other computer actions. |
 | **Show usage hints** | Opens a short panel of the same talk and pointing examples. |
 | **Speak replies** and **Voice sex** | Reads one marked line aloud. |
+| **Avatar…** | Size (large is the biggest), walk speed at 100%, 150%, or 200%, walk or teleport, and which corner he sleeps in. |
 | **Send him home** | Parks the blueberry at the bottom of the screen. |
 | **Hide the blueberry** | Takes him off the screen without quitting. The same Hide is on a right-click of the dot. Left-drag moves him. Talk on that menu opens a box. Type and press Enter. Double-click the box to close it. |
 | **Phone on the left / center / right** | Where his eyes rest. |

@@ -506,6 +506,9 @@ public class CoreTests
         Assert.Equal("Hello, mate!", SpokenSpan.Strip("[[Hello, mate!]]"));
         Assert.Equal("Hello, mate!", SpokenSpan.Extract("[[spoken: Hello, mate!]]"));
         Assert.Equal("Hello, mate!", SpokenSpan.Strip("[[spoken: Hello, mate!]]"));
+        Assert.Equal("Hello.", SpokenSpan.Strip("Hello. [[act:wave]]"));
+        Assert.Equal("Hello.", SpokenSpan.Extract("[[spoken]]Hello.[[/spoken]] [[act:wave]]"));
+        Assert.Equal(new[] { "wave", "hop" }, SpokenSpan.TakeActs("Hi [[act:wave]] [[act:nope]] [[act:hop]]"));
     }
 
     [Fact]

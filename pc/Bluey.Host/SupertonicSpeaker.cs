@@ -31,6 +31,7 @@ public sealed class SupertonicSpeaker : IReplySpeaker, IDisposable
 
     public event Action<string>? Failed;
     public event Action<string>? StatusChanged;
+    public event Action? PlaybackFinished;
 
     public bool Enabled => _speech.Current.TextToSpeech;
     public bool IsRunning => _process is { HasExited: false };
@@ -47,6 +48,12 @@ public sealed class SupertonicSpeaker : IReplySpeaker, IDisposable
     {
         _speech = speech;
         _script = LocateScript();
+        _speakers.Drained += () =>
+        {
+            var app = System.Windows.Application.Current;
+            if (app == null) PlaybackFinished?.Invoke();
+            else app.Dispatcher.BeginInvoke(new Action(() => PlaybackFinished?.Invoke()));
+        };
         _watchdog = new System.Threading.Timer(CheckHealth, null, TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(4));
     }
 

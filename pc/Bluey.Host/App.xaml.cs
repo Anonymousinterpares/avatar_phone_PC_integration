@@ -38,13 +38,23 @@ public partial class App : System.Windows.Application
         var http = new HttpClient { Timeout = TimeSpan.FromMinutes(3) };
         var brains = new BrainClient(http, store);
         _overlay = new CursorOverlay();
+        _overlay.Configure(settings.BerrySize, settings.BerrySpeed, settings.BerryTeleport, settings.BerrySleepCorner);
         _overlay.Show();
         var desk = new WindowsDesk(() => store.Load().ComputerControl, visible => _overlay.SetVisible(visible));
         _speaker = new SupertonicSpeaker(speech);
         _session = new CharacterSession(brains, desk, _speaker);
-        _session.CaptionChanged += text => _overlay.SetCaption(text);
+        _session.CaptionChanged += text =>
+        {
+            _overlay.SetCaption(text);
+            if (string.IsNullOrWhiteSpace(text)) _overlay.EndTalk();
+            else if (speech.Current.TextToSpeech) _overlay.TalkForAudio();
+            else _overlay.TalkForText();
+        };
+        _speaker.PlaybackFinished += () => _overlay.EndTalk();
+        _speaker.Failed += _ => _overlay.EndTalk();
         _session.PointChanged += point => _overlay.PointAt(point);
         _session.ActivityChanged += busy => _overlay.SetThinking(busy);
+        _session.PoseRequested += name => _overlay.PlayPose(name);
         _streamer = new DesktopStreamer();
         _audioStreamer = new AudioStreamer();
         Bluey.Audio.AudioDeviceManager.EnsurePhysicalDefault();

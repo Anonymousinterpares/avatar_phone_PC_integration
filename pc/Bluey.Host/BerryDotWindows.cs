@@ -11,6 +11,7 @@ public sealed class BerryDotMenu : Window
 
     public event Action? HideChosen;
     public event Action? TalkChosen;
+    public event Action? SleepChosen;
 
     public BerryDotMenu()
     {
@@ -24,6 +25,7 @@ public sealed class BerryDotMenu : Window
         var stack = new WpfControls.StackPanel();
         stack.Children.Add(Item("Hide", () => { _chose = true; HideChosen?.Invoke(); Close(); }));
         stack.Children.Add(Item("Talk", () => { _chose = true; TalkChosen?.Invoke(); Close(); }));
+        stack.Children.Add(Item("Go to sleep", () => { _chose = true; SleepChosen?.Invoke(); Close(); }));
         Content = new WpfControls.Border
         {
             Background = new Media.SolidColorBrush(Media.Color.FromRgb(28, 32, 52)),

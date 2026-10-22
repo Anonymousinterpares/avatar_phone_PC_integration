@@ -130,6 +130,10 @@ public sealed class AppSettings
     public bool ComputerControl { get; set; }
     public bool UsageHints { get; set; } = true;
     public string PhoneSeat { get; set; } = "center";
+    public string BerrySize { get; set; } = "large";
+    public int BerrySpeed { get; set; } = 100;
+    public bool BerryTeleport { get; set; }
+    public string BerrySleepCorner { get; set; } = "bottom-right";
     public string HostId { get; set; } = "urn:uuid:" + Guid.NewGuid().ToString();
     public string OpenAiApiKey { get; set; } = "";
     public string XaiApiKey { get; set; } = "";
@@ -204,6 +208,10 @@ public sealed class SettingsStore
         }
         settings.OpenRouterProvider = OpenRouterProviders.Normalize(settings.OpenRouterProvider);
         settings.OpenRouterModel = OpenRouterModels.Normalize(settings.OpenRouterModel);
+        settings.BerrySize = settings.BerrySize is "small" or "medium" or "large" ? settings.BerrySize : "large";
+        settings.BerrySpeed = settings.BerrySpeed is 150 or 200 ? settings.BerrySpeed : 100;
+        settings.BerrySleepCorner = settings.BerrySleepCorner is "bottom-left" or "top-left" or "top-right" or "bottom-right"
+            ? settings.BerrySleepCorner : "bottom-right";
         return settings;
     }
 

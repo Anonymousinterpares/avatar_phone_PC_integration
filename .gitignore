@@ -17,3 +17,4 @@ android/local.properties
 Thumbs.db
 .env
 appsettings.*.local.json
+art/

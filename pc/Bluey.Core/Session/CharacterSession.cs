@@ -37,6 +37,7 @@ public sealed class CharacterSession
     public event Action<string?>? CaptionChanged;
     public event Action<PointD?>? PointChanged;
     public event Action<bool>? ActivityChanged;
+    public event Action<string>? PoseRequested;
     private int _busy;
 
     private void Busy(bool on)
@@ -301,8 +302,9 @@ public sealed class CharacterSession
             if (speak) _speaker?.Stop();
             return "";
         }
+        foreach (var act in SpokenSpan.TakeActs(text)) PoseRequested?.Invoke(act);
         var display = SpokenSpan.Strip(text);
-        CaptionChanged?.Invoke(display);
+        CaptionChanged?.Invoke(string.IsNullOrWhiteSpace(display) ? null : display);
         if (!speak) return display;
         var spoken = SpokenSpan.Extract(text);
         if (string.IsNullOrWhiteSpace(spoken) && fallbackToDisplay && _speaker?.Enabled == true && !string.IsNullOrWhiteSpace(display))
@@ -347,6 +349,7 @@ public sealed class CharacterSession
                 PointChanged?.Invoke(null);
                 return new ToolRun { Text = "Your cursor will head home." };
             case "go_to_sleep":
+                PoseRequested?.Invoke("sleep");
                 PointChanged?.Invoke(null);
                 return new ToolRun { Text = "Going to sleep. Say a very short goodbye.", GoToSleep = true };
             case "web_research":

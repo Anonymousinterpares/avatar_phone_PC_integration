@@ -157,6 +157,16 @@ public static class SpokenSpan
         @"^\[\[(.*?)\]\]$",
         System.Text.RegularExpressions.RegexOptions.Singleline | System.Text.RegularExpressions.RegexOptions.Compiled);
 
+    private static readonly System.Text.RegularExpressions.Regex ActTag = new(
+        @"\[\[act:([a-zA-Z0-9_]+)\]\]",
+        System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    public static readonly HashSet<string> ActNames = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "wave", "greet", "hop", "cheer", "laugh", "wink", "yawn", "sneeze",
+        "point", "sad", "surprise", "love", "confused", "huff", "sleep", "talk",
+    };
+
     public static string? Extract(string? text)
     {
         if (string.IsNullOrEmpty(text)) return null;
@@ -181,10 +191,22 @@ public static class SpokenSpan
         return null;
     }
 
+    public static IReadOnlyList<string> TakeActs(string? text)
+    {
+        if (string.IsNullOrEmpty(text)) return Array.Empty<string>();
+        var found = new List<string>();
+        foreach (System.Text.RegularExpressions.Match match in ActTag.Matches(text))
+        {
+            var name = match.Groups[1].Value.ToLowerInvariant();
+            if (ActNames.Contains(name)) found.Add(name);
+        }
+        return found;
+    }
+
     public static string Strip(string? text)
     {
         if (string.IsNullOrEmpty(text)) return "";
-        var stripped = Leftover.Replace(Span.Replace(text, match => match.Groups[1].Value), "");
+        var stripped = ActTag.Replace(Leftover.Replace(Span.Replace(text, match => match.Groups[1].Value), ""), "");
         var trimmed = stripped.Trim();
         var generic = GenericBracket.Match(trimmed);
         if (generic.Success)

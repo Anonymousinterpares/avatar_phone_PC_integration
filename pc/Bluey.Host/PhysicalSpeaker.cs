@@ -16,6 +16,8 @@ public sealed class PhysicalSpeaker : IDisposable
     private float[] _samples = new float[48000];
     private int _count;
     private int _rate = 16000;
+    private bool _heard;
+    public event Action? Drained;
     private double _pos;
     private Thread? _thread;
     private volatile bool _running;
@@ -50,6 +52,7 @@ public sealed class PhysicalSpeaker : IDisposable
             }
             Array.Copy(mono, 0, _samples, _count, incoming);
             _count += incoming;
+            _heard = true;
             if (_thread == null)
             {
                 _running = true;
@@ -61,11 +64,15 @@ public sealed class PhysicalSpeaker : IDisposable
 
     public void Clear()
     {
+        var drained = false;
         lock (_gate)
         {
+            drained = _heard;
             _count = 0;
             _pos = 0;
+            _heard = false;
         }
+        if (drained) Drained?.Invoke();
     }
 
     public void Dispose()
@@ -177,6 +184,7 @@ public sealed class PhysicalSpeaker : IDisposable
                 }
                 var audible = WriteFrames(data, (int)write);
                 _render.ReleaseBuffer(write, audible ? 0u : 2u);
+                if (audible == false && TookLast()) Drained?.Invoke();
                 Thread.Sleep(8);
             }
             catch
@@ -186,6 +194,16 @@ public sealed class PhysicalSpeaker : IDisposable
             }
         }
         CloseClient();
+    }
+
+    private bool TookLast()
+    {
+        lock (_gate)
+        {
+            if (!_heard || _count > 0) return false;
+            _heard = false;
+            return true;
+        }
     }
 
     private bool EnsureClient()

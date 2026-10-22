@@ -193,6 +193,7 @@ public sealed class TrayApp : IDisposable
             ttsHealth.Text = "TTS: " + _speaker.StatusText;
             ttsTest.Enabled = _speaker.IsReady;
         };
+        menu.Items.Add("Avatar…", null, (_, _) => ShowAvatar());
         menu.Items.Add("Send him home", null, (_, _) => _overlay.PointAt(null));
         var hidden = new ToolStripMenuItem("Hide the blueberry") { CheckOnClick = true };
         hidden.CheckedChanged += (_, _) => _overlay.SetUserHidden(hidden.Checked);
@@ -258,6 +259,14 @@ public sealed class TrayApp : IDisposable
     {
         _settings.PhoneSeat = seat;
         _store.Save(_settings);
+    }
+
+    private void ShowAvatar()
+    {
+        using var form = new AvatarForm(_settings);
+        if (form.ShowDialog() != DialogResult.OK) return;
+        _store.Save(_settings);
+        _overlay.Configure(_settings.BerrySize, _settings.BerrySpeed, _settings.BerryTeleport, _settings.BerrySleepCorner);
     }
 
     private void ShowBerryTalk()
