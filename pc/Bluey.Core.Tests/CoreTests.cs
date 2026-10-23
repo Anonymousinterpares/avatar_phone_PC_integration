@@ -537,8 +537,12 @@ public class CoreTests
     }
 
     [Fact]
-    public void Present_speaks_fallback_when_enabled_and_no_tags()
+    public async Task Present_speaks_fallback_when_enabled_and_no_tags()
     {
+        var previous = CharacterSession.GapWhenSilent;
+        CharacterSession.GapWhenSilent = TimeSpan.Zero;
+        try
+        {
         var speaker = new RecordingSpeaker { Enabled = true };
         var session = new CharacterSession(
             new BrainClient(new HttpClient(), new SettingsStore(Path.Combine(Path.GetTempPath(), "bluey-unused-" + Guid.NewGuid().ToString("N")))),
@@ -548,17 +552,31 @@ public class CoreTests
         // Without fallback (e.g. ShowCaption), plain text is not spoken
         session.Present("No tags here.", speak: true, fallbackToDisplay: false);
         Assert.Empty(speaker.Spoken);
-        Assert.Equal(1, speaker.Stops);
+        Assert.Equal(0, speaker.Stops);
 
         // With fallback (e.g. ShowAsync on final answer), plain text IS spoken
         session.Present("Plain answer from model.", speak: true, fallbackToDisplay: true);
+        await WaitUntil(() => speaker.Spoken.Count >= 1);
         Assert.Single(speaker.Spoken);
         Assert.Equal("Plain answer from model.", speaker.Spoken[0]);
 
         // Generic bracket [[...]] is extracted as spoken even without fallback
         session.Present("[[Generic bracket answer]]", speak: true, fallbackToDisplay: false);
+        await WaitUntil(() => speaker.Spoken.Count >= 2);
         Assert.Equal(2, speaker.Spoken.Count);
         Assert.Equal("Generic bracket answer", speaker.Spoken[1]);
+        }
+        finally
+        {
+            CharacterSession.GapWhenSilent = previous;
+        }
+    }
+
+    private static async Task WaitUntil(Func<bool> ready)
+    {
+        var deadline = DateTime.UtcNow.AddSeconds(2);
+        while (!ready() && DateTime.UtcNow < deadline) await Task.Delay(10);
+        Assert.True(ready());
     }
 
     [Fact]
@@ -570,17 +588,15 @@ public class CoreTests
             new BrainClient(new HttpClient(), new SettingsStore(Path.Combine(Path.GetTempPath(), "bluey-unused-" + Guid.NewGuid().ToString("N")))),
             new FakeDesk(),
             speaker);
-        session.CaptionChanged += text => shown = text;
+        session.CaptionChanged += (text, _) => shown = text;
         session.ShowCaption("The list is long. [[spoken]]It's the metal one.[[/spoken]]");
         Assert.Equal("The list is long. It's the metal one.", shown);
         Assert.Equal(new[] { "It's the metal one." }, speaker.Spoken);
         session.ShowCaption("Nothing to hear.");
         Assert.Equal(new[] { "It's the metal one." }, speaker.Spoken);
-        Assert.Equal(1, speaker.Stops);
-        session.ShowCaption("  ");
-        Assert.Equal(2, speaker.Stops);
+        Assert.Equal(0, speaker.Stops);
         session.Stop();
-        Assert.Equal(3, speaker.Stops);
+        Assert.Equal(1, speaker.Stops);
     }
 
     [Fact]
@@ -604,7 +620,14 @@ public sealed class RecordingSpeaker : IReplySpeaker
     public bool Enabled { get; set; }
     public List<string> Spoken { get; } = new();
     public int Stops { get; private set; }
-    public void Speak(string text) => Spoken.Add(text);
+    public event Action? PlaybackFinished;
+    public event Action<string>? Failed;
+    public void RaiseFailed(string message) => Failed?.Invoke(message);
+    public void Speak(string text)
+    {
+        Spoken.Add(text);
+        PlaybackFinished?.Invoke();
+    }
     public void Stop() => Stops++;
 }
 

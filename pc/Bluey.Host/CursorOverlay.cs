@@ -3,6 +3,7 @@ using System.Windows;
 using System.Windows.Interop;
 using System.Windows.Threading;
 using Bluey.Desk;
+using Bluey.Speech;
 using Media = System.Windows.Media;
 using WpfControls = System.Windows.Controls;
 using WpfShapes = System.Windows.Shapes;
@@ -14,9 +15,6 @@ public sealed class CursorOverlay : Window
     private readonly WpfControls.TextBlock _caption;
     private readonly DispatcherTimer _timer;
     private readonly DispatcherTimer _captionTimer;
-    private readonly Queue<string> _captionQueue = new();
-    private DateTime _captionShownAt;
-    private bool _captionHolding;
     private readonly WpfControls.Grid _berry;
     private readonly WpfControls.Image _sprite;
     private readonly BerryFilm? _film;
@@ -27,7 +25,6 @@ public sealed class CursorOverlay : Window
     private bool _traveling;
     private bool _posePlaying;
     private bool _talking;
-    private bool _talkForAudio;
     private DateTime _talkUntil;
     private bool _asleep;
     private bool _sleepTrip;
@@ -43,6 +40,8 @@ public sealed class CursorOverlay : Window
     private string _bubble = "bar";
     private bool _noTouch;
     private string _captionText = "";
+    private bool _captionVoiced;
+    private SpeechMarks? _pendingMarks;
     private BerryComicBubble? _comic;
     private BerryBarCaption? _bar;
     private double _comicX = double.NaN;
@@ -169,8 +168,13 @@ public sealed class CursorOverlay : Window
         Content = root;
         _timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(16) };
         _timer.Tick += (_, _) => Step();
-        _captionTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(4) };
-        _captionTimer.Tick += (_, _) => AdvanceCaption();
+        _captionTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(12) };
+        _captionTimer.Tick += (_, _) =>
+        {
+            _captionTimer.Stop();
+            _captionText = "";
+            ShowCaption();
+        };
         SourceInitialized += (_, _) => ApplyPointerStyle();
         Loaded += (_, _) =>
         {
@@ -185,79 +189,42 @@ public sealed class CursorOverlay : Window
         if (!thinking) RestPose();
     });
 
-    public void SetCaption(string? text)
+    public void BindSpeechClock(Func<double> heard) => BubbleRead.Heard = heard;
+
+    public void SetCaption(string? text, bool voiced = false)
     {
         Dispatcher.Invoke(() =>
         {
-            var next = string.IsNullOrWhiteSpace(text) ? "" : text.Length > 280 ? text[..280] : text;
-            if (_captionText.Length == 0)
-            {
-                PresentCaption(next);
-                return;
-            }
-            if (next == _captionText && _captionQueue.Count == 0) return;
-            if (ExtendsCaption(_captionText, next))
-            {
-                _captionText = next;
-                ShowCaption();
-                return;
-            }
-            if (_captionQueue.Count > 0 && _captionQueue.Last() == next) return;
-            var age = DateTime.UtcNow - _captionShownAt;
-            if (age >= TimeSpan.FromSeconds(4) && _captionQueue.Count == 0)
-            {
-                PresentCaption(next);
-                return;
-            }
-            _captionQueue.Enqueue(next);
+            _captionTimer.Stop();
+            _captionVoiced = voiced;
+            _pendingMarks = null;
+            _captionText = string.IsNullOrWhiteSpace(text) ? "" : SpeechText.Prepare(text);
+            ShowCaption();
         });
     }
 
-    private void PresentCaption(string text)
+    public void FollowSpeech(SpeechMarks marks)
     {
-        _captionText = text;
-        _captionShownAt = DateTime.UtcNow;
-        ShowCaption();
-        _captionTimer.Stop();
-        if (text.Length == 0)
+        Dispatcher.Invoke(() =>
         {
-            _captionHolding = false;
-            if (_captionQueue.Count > 0) PresentCaption(_captionQueue.Dequeue());
-            return;
-        }
-        _captionHolding = true;
-        _captionTimer.Interval = TimeSpan.FromSeconds(4);
-        _captionTimer.Start();
+            if (!_captionVoiced || _captionText.Length == 0) return;
+            _pendingMarks = marks;
+            ApplyPace();
+        });
     }
 
-    private void AdvanceCaption()
+    public void HoldCaption() => Dispatcher.Invoke(() => _captionTimer.Stop());
+
+    public void ReleaseCaption()
     {
-        _captionTimer.Stop();
-        if (_captionHolding)
+        Dispatcher.Invoke(() =>
         {
-            _captionHolding = false;
-            if (_captionQueue.Count > 0)
-            {
-                PresentCaption(_captionQueue.Dequeue());
-                return;
-            }
-            var left = 12 - (DateTime.UtcNow - _captionShownAt).TotalSeconds;
-            if (left <= 0.05)
-            {
-                PresentCaption("");
-                return;
-            }
-            _captionTimer.Interval = TimeSpan.FromSeconds(left);
+            if (_captionText.Length == 0) return;
+            _captionTimer.Stop();
+            _captionTimer.Interval = TimeSpan.FromSeconds(12);
             _captionTimer.Start();
-            return;
-        }
-        if (_captionQueue.Count > 0) PresentCaption(_captionQueue.Dequeue());
-        else PresentCaption("");
+        });
     }
-
-    private static bool ExtendsCaption(string current, string next) =>
-        current.Length > 0 && next.Length > 0 &&
-        (next.StartsWith(current, StringComparison.Ordinal) || current.StartsWith(next, StringComparison.Ordinal));
 
     public void PointAt(PointD? point)
     {
@@ -323,13 +290,21 @@ public sealed class CursorOverlay : Window
         if (_bubble == "comic")
         {
             _comic ??= new BerryComicBubble();
-            _comic.Place(_captionText, anchorX, anchorY, dpi, avoid);
+            _comic.Place(_captionText, anchorX, anchorY, dpi, avoid, _captionVoiced);
         }
         else
         {
             _bar ??= new BerryBarCaption();
-            _bar.Place(_captionText, dpi, avoid);
+            _bar.Place(_captionText, dpi, avoid, _captionVoiced);
         }
+        ApplyPace();
+    }
+
+    private void ApplyPace()
+    {
+        if (_pendingMarks is not SpeechMarks marks || !_captionVoiced) return;
+        if (_bubble == "comic") _comic?.FollowSpeech(marks, visibleIsPrefix: false);
+        else _bar?.FollowSpeech(marks, visibleIsPrefix: false);
     }
 
     private Rect AvatarDip()
@@ -347,21 +322,18 @@ public sealed class CursorOverlay : Window
     public void TalkForText() => Dispatcher.Invoke(() =>
     {
         _talking = true;
-        _talkForAudio = false;
         _talkUntil = DateTime.UtcNow.AddSeconds(3);
     });
 
     public void TalkForAudio() => Dispatcher.Invoke(() =>
     {
         _talking = true;
-        _talkForAudio = true;
-        _talkUntil = DateTime.UtcNow.AddSeconds(30);
+        _talkUntil = DateTime.UtcNow.AddMinutes(2);
     });
 
     public void EndTalk() => Dispatcher.Invoke(() =>
     {
         _talking = false;
-        _talkForAudio = false;
     });
 
     public void Sleep() => Dispatcher.Invoke(() =>
@@ -458,7 +430,7 @@ public sealed class CursorOverlay : Window
         if (_traveling) return "walk";
         if (_posePlaying) return "pose";
         if (_thinking) return "think";
-        if (_talking && (_talkForAudio || DateTime.UtcNow < _talkUntil)) return "talk";
+        if (_talking && DateTime.UtcNow < _talkUntil) return "talk";
         if (_talking) _talking = false;
         return "idle";
     }

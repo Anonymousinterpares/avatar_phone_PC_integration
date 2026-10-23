@@ -32,6 +32,9 @@ public sealed class SupertonicSpeaker : IReplySpeaker, IDisposable
     public event Action<string>? Failed;
     public event Action<string>? StatusChanged;
     public event Action? PlaybackFinished;
+    public event Action<SpeechMarks>? PaceReady;
+
+    public double HeardSeconds() => _speakers.HeardSeconds();
 
     public bool Enabled => _speech.Current.TextToSpeech;
     public bool IsRunning => _process is { HasExited: false };
@@ -50,6 +53,7 @@ public sealed class SupertonicSpeaker : IReplySpeaker, IDisposable
         _script = LocateScript();
         _speakers.Drained += () =>
         {
+            SpeechLog.Write("playback finished");
             var app = System.Windows.Application.Current;
             if (app == null) PlaybackFinished?.Invoke();
             else app.Dispatcher.BeginInvoke(new Action(() => PlaybackFinished?.Invoke()));
@@ -100,7 +104,12 @@ public sealed class SupertonicSpeaker : IReplySpeaker, IDisposable
     {
         if (!_speech.Current.TextToSpeech) return;
         var spoken = SpeechText.Prepare(text);
-        if (spoken.Length == 0) return;
+        if (spoken.Length == 0)
+        {
+            SpeechLog.Write("speak skipped, empty line");
+            return;
+        }
+        SpeechLog.Write("speak queued \"" + TrimLog(spoken) + "\"");
         lock (_gate)
         {
             if (_disposed) return;
@@ -193,10 +202,12 @@ public sealed class SupertonicSpeaker : IReplySpeaker, IDisposable
                 continue;
             }
             if (text == null) continue;
+            SpeechLog.Write("synth start \"" + TrimLog(text) + "\" lang=" + lang);
             var wav = Request(text, sex, lang);
             var play = false;
             lock (_gate) play = wav != null && generation == _generation && !_disposed;
-            if (play) Play(wav!);
+            if (wav != null && !play) SpeechLog.Write("dropped audio because a newer line replaced it");
+            if (play) Play(wav!, text, generation);
         }
     }
 
@@ -312,9 +323,16 @@ public sealed class SupertonicSpeaker : IReplySpeaker, IDisposable
             string? line = null;
             try
             {
-                line = stdout.ReadLine();
+                var read = Task.Run(() => stdout.ReadLine());
+                var left = deadline - DateTime.UtcNow;
+                if (left <= TimeSpan.Zero || !read.Wait(left))
+                {
+                    SpeechLog.Write("synth timed out");
+                    return null;
+                }
+                line = read.Result;
             }
-            catch (Exception ex) when (ex is IOException or ObjectDisposedException)
+            catch (Exception ex) when (ex is IOException or ObjectDisposedException or AggregateException)
             {
                 return null;
             }
@@ -334,14 +352,24 @@ public sealed class SupertonicSpeaker : IReplySpeaker, IDisposable
         return null;
     }
 
-    private void Play(string wav)
+    private void Play(string wav, string text, int generation)
     {
         if (PhysicalSpeaker.TryReadWav(wav, out var samples, out var rate))
         {
-            _speakers.Clear();
+            SpeechLog.Write("play " + samples.Length + " samples at " + rate);
             _speakers.Enqueue(samples, rate);
+            ThreadPool.UnsafeQueueUserWorkItem(_ =>
+            {
+                var watch = Stopwatch.StartNew();
+                var marks = SpeechPace.Measure(samples, rate);
+                watch.Stop();
+                SpeechLog.Write("pace " + marks.GapStarts.Length + " gaps in " + watch.Elapsed.TotalMilliseconds.ToString("0.0") + "ms");
+                RaisePace(marks, generation);
+            }, null);
             return;
         }
+        var guess = Math.Clamp(text.Length / 13.0, 1.5, 40);
+        RaisePace(new SpeechMarks(0, guess, guess, Array.Empty<double>(), Array.Empty<double>(), false), generation);
         try
         {
             lock (_gate)
@@ -365,6 +393,21 @@ public sealed class SupertonicSpeaker : IReplySpeaker, IDisposable
                 _player.Play();
             }));
         }
+    }
+
+    private void RaisePace(SpeechMarks marks, int generation)
+    {
+        var app = System.Windows.Application.Current;
+        void Deliver()
+        {
+            lock (_gate)
+            {
+                if (generation != _generation || _disposed) return;
+            }
+            PaceReady?.Invoke(marks);
+        }
+        if (app == null) Deliver();
+        else app.Dispatcher.BeginInvoke(Deliver);
     }
 
     private System.Windows.Media.MediaPlayer CreatePlayer()
@@ -409,6 +452,7 @@ public sealed class SupertonicSpeaker : IReplySpeaker, IDisposable
     {
         if (string.IsNullOrWhiteSpace(message) || message == _lastError) return;
         _lastError = message;
+        SpeechLog.Write("failed: " + message);
         Failed?.Invoke(message);
         NotifyStatus();
     }
@@ -417,6 +461,8 @@ public sealed class SupertonicSpeaker : IReplySpeaker, IDisposable
     {
         try { StatusChanged?.Invoke(StatusText); } catch { }
     }
+
+    private static string TrimLog(string text) => text.Length <= 80 ? text : text[..80];
 
     private static string LocateScript()
     {

@@ -76,6 +76,17 @@ public sealed class CharacterSession
     private ScreenCapture? _shot;
     private readonly object _gate = new();
     private int _win;
+    private readonly Queue<OutputLine> _outputs = new();
+    private readonly object _outputGate = new();
+    private int _outputGen;
+    private bool _draining;
+    private TaskCompletionSource? _playbackWait;
+
+    private sealed class OutputLine
+    {
+        public string? Display;
+        public string? Spoken;
+    }
 
     public CharacterSession(BrainClient brains, IDesk desk, IReplySpeaker? speaker = null)
     {
@@ -86,7 +97,10 @@ public sealed class CharacterSession
 
     public bool Awake { get; private set; }
     public DateTimeOffset StoppedUntil { get; private set; }
-    public event Action<string?>? CaptionChanged;
+    public event Action<string?, bool>? CaptionChanged;
+    public event Action? OutputsIdle;
+    public event Action<string>? SpeechGaveUp;
+    internal static TimeSpan GapWhenSilent { get; set; } = SpeechPace.QuietHold;
     public event Action<PointD?>? PointChanged;
     public event Action<bool>? ActivityChanged;
     public event Action<string>? PoseRequested;
@@ -144,9 +158,10 @@ public sealed class CharacterSession
     {
         StoppedUntil = DateTimeOffset.UtcNow.AddSeconds(6);
         DropLooks();
+        CancelOutputs();
         _speaker?.Stop();
         PointChanged?.Invoke(null);
-        CaptionChanged?.Invoke("Stopped");
+        CaptionChanged?.Invoke("Stopped", false);
     }
 
     public async Task<Packet?> HandleAsync(Packet packet, Func<Packet, Task> push, CancellationToken cancellationToken)
@@ -162,8 +177,9 @@ public sealed class CharacterSession
                 Awake = false;
                 DropLooks();
                 PointChanged?.Invoke(null);
+                CancelOutputs();
                 _speaker?.Stop();
-                CaptionChanged?.Invoke(null);
+                CaptionChanged?.Invoke(null, false);
                 return Packet.Of("session", SessionJson(), packet.CallId);
             case "realtimeToken":
                 try
@@ -173,7 +189,7 @@ public sealed class CharacterSession
                 }
                 catch (Exception ex)
                 {
-                    CaptionChanged?.Invoke(ex.Message);
+                    CaptionChanged?.Invoke(ex.Message, false);
                     return new Packet { Command = "realtimeToken", CallId = packet.CallId, Text = JsonSerializer.Serialize(new { error = ex.Message }) };
                 }
             case "tool":
@@ -197,10 +213,10 @@ public sealed class CharacterSession
                 await AskAsync(packet.Text ?? "", push, cancellationToken);
                 return Packet.Of("askDone", null, packet.CallId);
             case "caption":
-                CaptionChanged?.Invoke(packet.Text);
+                CaptionChanged?.Invoke(packet.Text, false);
                 return null;
             case "captionDone":
-                CaptionChanged?.Invoke(string.IsNullOrWhiteSpace(packet.Text) ? null : packet.Text);
+                CaptionChanged?.Invoke(string.IsNullOrWhiteSpace(packet.Text) ? null : packet.Text, false);
                 return null;
             case "stop":
                 Stop();
@@ -382,22 +398,123 @@ public sealed class CharacterSession
     {
         if (text == null)
         {
-            CaptionChanged?.Invoke(null);
-            if (speak) _speaker?.Stop();
+            EnqueueOutput(null, null);
             return "";
         }
         foreach (var act in SpokenSpan.TakeActs(text)) PoseRequested?.Invoke(act);
         var display = SpokenSpan.Strip(text);
-        CaptionChanged?.Invoke(string.IsNullOrWhiteSpace(display) ? null : display);
-        if (!speak) return display;
-        var spoken = SpokenSpan.Extract(text);
-        if (string.IsNullOrWhiteSpace(spoken) && fallbackToDisplay && _speaker?.Enabled == true && !string.IsNullOrWhiteSpace(display))
+        string? spoken = null;
+        if (speak)
         {
-            spoken = display;
+            spoken = SpokenSpan.Extract(text);
+            if (string.IsNullOrWhiteSpace(spoken) && fallbackToDisplay && _speaker?.Enabled == true && !string.IsNullOrWhiteSpace(display))
+                spoken = display;
+            if (string.IsNullOrWhiteSpace(spoken)) spoken = null;
         }
-        if (string.IsNullOrWhiteSpace(spoken)) _speaker?.Stop();
-        else _speaker?.Speak(spoken);
+        EnqueueOutput(string.IsNullOrWhiteSpace(display) ? null : display, spoken);
         return display;
+    }
+
+    private void CancelOutputs()
+    {
+        _outputGen++;
+        _playbackWait?.TrySetResult();
+        lock (_outputGate)
+        {
+            _outputs.Clear();
+            _draining = false;
+        }
+    }
+
+    private void EnqueueOutput(string? display, string? spoken)
+    {
+        var gen = _outputGen;
+        lock (_outputGate)
+        {
+            _outputs.Enqueue(new OutputLine { Display = display, Spoken = spoken });
+            if (_draining) return;
+            _draining = true;
+        }
+        _ = DrainOutputsAsync(gen);
+    }
+
+    private async Task DrainOutputsAsync(int gen)
+    {
+        try
+        {
+            while (gen == _outputGen)
+            {
+                OutputLine item;
+                lock (_outputGate)
+                {
+                    if (gen != _outputGen || _outputs.Count == 0) break;
+                    item = _outputs.Dequeue();
+                }
+                var voiced = _speaker?.Enabled == true && !string.IsNullOrWhiteSpace(item.Spoken);
+                CaptionChanged?.Invoke(item.Display, voiced);
+                SpeechLog.Write(voiced
+                    ? "show then speak \"" + TrimForLog(item.Spoken) + "\""
+                    : "show \"" + TrimForLog(item.Display) + "\" (no speech, hold " + (int)GapWhenSilent.TotalSeconds + "s)");
+                if (voiced) await WaitForPlaybackAsync(gen, item.Spoken!);
+                else await Task.Delay(GapWhenSilent);
+                if (gen != _outputGen) break;
+                bool more;
+                lock (_outputGate) more = _outputs.Count > 0;
+                if (!more) OutputsIdle?.Invoke();
+            }
+        }
+        finally
+        {
+            var again = false;
+            lock (_outputGate)
+            {
+                if (gen != _outputGen || _outputs.Count == 0)
+                {
+                    if (gen == _outputGen) _draining = false;
+                }
+                else again = true;
+            }
+            if (again) _ = DrainOutputsAsync(gen);
+        }
+    }
+
+    private Task WaitForPlaybackAsync(int gen, string spoken)
+    {
+        if (_speaker == null) return Task.CompletedTask;
+        var done = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _playbackWait = done;
+        void Finish()
+        {
+            if (gen == _outputGen) done.TrySetResult();
+        }
+        void Fail(string message)
+        {
+            SpeechLog.Write("playback failed: " + message);
+            Finish();
+        }
+        _speaker.PlaybackFinished += Finish;
+        _speaker.Failed += Fail;
+        _speaker.Speak(spoken);
+        var timeout = Task.Delay(TimeSpan.FromSeconds(90));
+        return Task.WhenAny(done.Task, timeout).ContinueWith(finished =>
+        {
+            _speaker.PlaybackFinished -= Finish;
+            _speaker.Failed -= Fail;
+            if (_playbackWait == done) _playbackWait = null;
+            if (finished.Result == timeout && gen == _outputGen)
+            {
+                var message = "No playback end for \"" + TrimForLog(spoken) + "\" after 90s.";
+                SpeechLog.Write(message);
+                SpeechGaveUp?.Invoke(message);
+            }
+        });
+    }
+
+    private static string TrimForLog(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return "";
+        var flat = text.Replace("\r", " ").Replace("\n", " ");
+        return flat.Length <= 80 ? flat : flat[..80];
     }
 
     public async Task<ToolRun> RunToolAsync(string name, string arguments, CancellationToken cancellationToken)
@@ -525,7 +642,7 @@ public sealed class CharacterSession
             return new ToolRun { Text = "That's a password field. Ask the user to type it themselves.", Ok = false };
         await _desk.TypeAsync(text, chunk =>
         {
-            CaptionChanged?.Invoke(chunk);
+            CaptionChanged?.Invoke(chunk, false);
             return Task.CompletedTask;
         }, cancellationToken);
         if (ActionGuard.ReadBool(arguments, "press_return"))
@@ -540,7 +657,7 @@ public sealed class CharacterSession
     {
         var keys = ActionGuard.ReadString(arguments, "keys");
         await _desk.PressAsync(keys, cancellationToken);
-        CaptionChanged?.Invoke(keys);
+        CaptionChanged?.Invoke(keys, false);
         return await LookAsync("Pressed " + keys + ".", cancellationToken);
     }
 

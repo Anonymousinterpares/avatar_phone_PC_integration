@@ -1,5 +1,7 @@
 using System.Runtime.InteropServices;
 using System.Windows.Interop;
+using System.Windows.Threading;
+using Bluey.Speech;
 using Media = System.Windows.Media;
 using WpfControls = System.Windows.Controls;
 using WpfShapes = System.Windows.Shapes;
@@ -145,6 +147,8 @@ public static class ScreenPlace
 public sealed class BerryComicBubble : System.Windows.Window
 {
     private readonly WpfControls.TextBlock _text;
+    private readonly WpfControls.ScrollViewer _scroll;
+    private readonly BubbleRead _read;
     private readonly WpfShapes.Path _cloud;
     private readonly WpfControls.Canvas _canvas;
 
@@ -167,6 +171,7 @@ public sealed class BerryComicBubble : System.Windows.Window
             TextWrapping = System.Windows.TextWrapping.Wrap,
             TextAlignment = System.Windows.TextAlignment.Center,
             MaxWidth = 240,
+            VerticalAlignment = System.Windows.VerticalAlignment.Top,
             IsHitTestVisible = false,
         };
         _cloud = new WpfShapes.Path
@@ -179,21 +184,28 @@ public sealed class BerryComicBubble : System.Windows.Window
             StrokeEndLineCap = Media.PenLineCap.Round,
             IsHitTestVisible = false,
         };
+        _scroll = BubbleReader.Wrap(_text);
+        _read = new BubbleRead(_scroll);
         _canvas = new WpfControls.Canvas { IsHitTestVisible = false };
         _canvas.Children.Add(_cloud);
-        _canvas.Children.Add(_text);
+        _canvas.Children.Add(_scroll);
         Content = _canvas;
         SourceInitialized += (_, _) => MakeClickThrough();
     }
 
-    public void Place(string text, double anchorX, double anchorY, System.Windows.DpiScale dpi, System.Windows.Rect avoid)
+    public void Place(string text, double anchorX, double anchorY, System.Windows.DpiScale dpi, System.Windows.Rect avoid, bool waitForSpeech)
     {
         _text.Width = double.NaN;
         _text.Text = text;
+        var workEarly = ScreenPlace.WorkArea(anchorX, anchorY, dpi);
+        var maxTextH = BubbleReader.TextSlot(workEarly, avoid);
         _text.Measure(new System.Windows.Size(240, double.PositiveInfinity));
         var textW = Math.Clamp(_text.DesiredSize.Width, 72, 240);
-        var textH = Math.Max(22, _text.DesiredSize.Height);
+        var fullTextH = Math.Max(22, _text.DesiredSize.Height);
+        var textH = Math.Min(fullTextH, maxTextH);
         _text.Width = textW;
+        _scroll.Width = textW;
+        _scroll.Height = textH;
         const double padX = 18;
         const double padY = 14;
         var bodyW = Math.Max(120, textW + padX * 2);
@@ -235,14 +247,19 @@ public sealed class BerryComicBubble : System.Windows.Window
         along = Math.Clamp(aim, drawn.AlongMin, drawn.AlongMax);
         drawn = Draw(bodyW, bodyH, side, tail, along);
         _cloud.Data = drawn.Geometry;
-        WpfControls.Canvas.SetLeft(_text, drawn.TextX);
-        WpfControls.Canvas.SetTop(_text, drawn.TextY);
+        WpfControls.Canvas.SetLeft(_scroll, drawn.TextX);
+        WpfControls.Canvas.SetTop(_scroll, drawn.TextY);
         Width = drawn.Width;
         Height = drawn.Height;
         Left = spot.X;
         Top = spot.Y;
         if (!IsVisible) Show();
+        UpdateLayout();
+        _scroll.UpdateLayout();
+        _read.Show(text, fullTextH > textH + 2, waitForSpeech);
     }
+
+    public void FollowSpeech(SpeechMarks marks, bool visibleIsPrefix) => _read.Follow(SpeechPace.Align(_text.Text, marks, visibleIsPrefix));
 
     private static System.Windows.Point Seat(int side, CloudDraw drawn, System.Windows.Rect avoid, double gap)
     {
@@ -324,7 +341,9 @@ public sealed class BerryComicBubble : System.Windows.Window
         }
         geometry.Freeze();
         var textW = _text.Width;
-        var textH = _text.DesiredSize.Height;
+        var textH = _scroll.Height;
+        if (double.IsNaN(textH) || textH < 1) textH = Math.Min(_text.DesiredSize.Height, bodyH);
+        if (textH > bodyH) textH = bodyH;
         var extraRight = side == 3 ? tail : puff;
         var extraBottom = side == 0 ? tail : puff;
         var tipX = side switch
@@ -432,6 +451,8 @@ public sealed class BerryComicBubble : System.Windows.Window
 public sealed class BerryBarCaption : System.Windows.Window
 {
     private readonly WpfControls.TextBlock _text;
+    private readonly WpfControls.ScrollViewer _scroll;
+    private readonly BubbleRead _read;
 
     public BerryBarCaption()
     {
@@ -452,9 +473,19 @@ public sealed class BerryBarCaption : System.Windows.Window
             TextWrapping = System.Windows.TextWrapping.Wrap,
             MaxWidth = 240,
             FontSize = 14,
+            VerticalAlignment = System.Windows.VerticalAlignment.Top,
             IsHitTestVisible = false,
         };
-        Content = _text;
+        _scroll = BubbleReader.Wrap(_text);
+        _read = new BubbleRead(_scroll);
+        Content = new WpfControls.Border
+        {
+            Background = new Media.SolidColorBrush(Media.Color.FromArgb(210, 20, 24, 38)),
+            CornerRadius = new System.Windows.CornerRadius(8),
+            Child = _scroll,
+            IsHitTestVisible = false,
+        };
+        _text.Background = Media.Brushes.Transparent;
         SourceInitialized += (_, _) =>
         {
             var hwnd = new WindowInteropHelper(this).Handle;
@@ -465,12 +496,20 @@ public sealed class BerryBarCaption : System.Windows.Window
         };
     }
 
-    public void Place(string text, System.Windows.DpiScale dpi, System.Windows.Rect avoid)
+    public void Place(string text, System.Windows.DpiScale dpi, System.Windows.Rect avoid, bool waitForSpeech)
     {
         _text.Text = text;
+        var workEarly = ScreenPlace.WorkArea(avoid.Left + avoid.Width / 2, avoid.Top, dpi);
+        var maxH = BubbleReader.TextSlot(workEarly, avoid);
+        _scroll.MaxHeight = maxH;
         _text.Measure(new System.Windows.Size(240, double.PositiveInfinity));
         var width = Math.Max(48, _text.DesiredSize.Width);
-        var height = Math.Max(24, _text.DesiredSize.Height);
+        var fullH = Math.Max(24, _text.DesiredSize.Height);
+        var height = Math.Min(fullH, maxH);
+        _scroll.Height = height;
+        SizeToContent = System.Windows.SizeToContent.Manual;
+        Width = width;
+        Height = height;
         var anchorX = avoid.Left + avoid.Width / 2;
         var anchorY = avoid.Top;
         var work = ScreenPlace.WorkArea(anchorX, anchorY, dpi);
@@ -481,6 +520,8 @@ public sealed class BerryBarCaption : System.Windows.Window
         Top = spot.Y;
         if (!IsVisible) Show();
         UpdateLayout();
+        _scroll.UpdateLayout();
+        _read.Show(text, fullH > height + 2, waitForSpeech);
         var fittedW = ActualWidth > 1 ? ActualWidth : width;
         var fittedH = ActualHeight > 1 ? ActualHeight : height;
         var fitted = ScreenPlace.ClearOf(anchorX - fittedW / 2, avoid.Top - fittedH - 12, fittedW, fittedH, avoid, work);
@@ -488,6 +529,135 @@ public sealed class BerryBarCaption : System.Windows.Window
         Top = fitted.Y;
     }
 
+    public void FollowSpeech(SpeechMarks marks, bool visibleIsPrefix) => _read.Follow(SpeechPace.Align(_text.Text, marks, visibleIsPrefix));
+
     [DllImport("user32.dll")] private static extern int GetWindowLong(IntPtr hwnd, int index);
     [DllImport("user32.dll")] private static extern int SetWindowLong(IntPtr hwnd, int index, int value);
+}
+
+static class BubbleReader
+{
+    public static double TextSlot(System.Windows.Rect work, System.Windows.Rect avoid)
+    {
+        var above = Math.Max(0, avoid.Top - work.Top);
+        var below = Math.Max(0, work.Bottom - avoid.Bottom);
+        var slot = Math.Max(above, below) - 88;
+        if (slot < 96) slot = 96;
+        if (slot > 200) slot = 200;
+        return slot;
+    }
+
+    public static WpfControls.ScrollViewer Wrap(WpfControls.TextBlock text) => new()
+    {
+        Content = text,
+        VerticalScrollBarVisibility = WpfControls.ScrollBarVisibility.Hidden,
+        HorizontalScrollBarVisibility = WpfControls.ScrollBarVisibility.Disabled,
+        CanContentScroll = false,
+        ClipToBounds = true,
+        VerticalContentAlignment = System.Windows.VerticalAlignment.Top,
+        IsHitTestVisible = false,
+    };
+}
+
+/// <summary>
+/// Scrolls a caption once. Speech follows the voice. Silence crosses the text during the four-second hold.
+/// The offset never jumps back to the top.
+/// </summary>
+sealed class BubbleRead
+{
+    public static Func<double>? Heard;
+
+    private readonly WpfControls.ScrollViewer _scroll;
+    private readonly DispatcherTimer _timer;
+    private SpeechPace? _pace;
+    private string _text = "";
+    private bool _overflow;
+    private bool _waiting;
+    private bool _done;
+    private DateTime _silentStart;
+    private DateTime _followStart;
+
+    public BubbleRead(WpfControls.ScrollViewer scroll)
+    {
+        _scroll = scroll;
+        _timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(40) };
+        _timer.Tick += (_, _) => Tick();
+    }
+
+    public void Show(string text, bool overflow, bool waitForSpeech)
+    {
+        var same = string.Equals(text, _text, StringComparison.Ordinal);
+        if (!same)
+        {
+            _text = text;
+            _pace = null;
+            _done = false;
+            _waiting = waitForSpeech;
+            _silentStart = DateTime.UtcNow;
+            _scroll.ScrollToVerticalOffset(0);
+        }
+        _overflow = overflow;
+        _scroll.UpdateLayout();
+        var room = _scroll.ScrollableHeight;
+        if (!overflow && room <= 1)
+        {
+            _timer.Stop();
+            _done = true;
+            return;
+        }
+        if (_done)
+        {
+            if (room > 1) _scroll.ScrollToVerticalOffset(room);
+            return;
+        }
+        _timer.Start();
+    }
+
+    public void Follow(SpeechPace pace)
+    {
+        if (_pace != null) return;
+        _pace = pace;
+        _waiting = false;
+        _scroll.UpdateLayout();
+        if (!_overflow && _scroll.ScrollableHeight <= 1)
+        {
+            _done = true;
+            _timer.Stop();
+            return;
+        }
+        _done = false;
+        _followStart = DateTime.UtcNow;
+        SpeechLog.Write("scroll " + pace.Note);
+        _timer.Start();
+    }
+
+    private void Tick()
+    {
+        _scroll.UpdateLayout();
+        var room = _scroll.ScrollableHeight;
+        if (room <= 1 || _waiting) return;
+        var view = _scroll.ViewportHeight;
+        if (view <= 1) return;
+        double seconds;
+        double fraction;
+        if (_pace != null)
+        {
+            if (_pace.FromSpeaker && Heard != null) seconds = Heard();
+            else seconds = (DateTime.UtcNow - _followStart).TotalSeconds;
+            fraction = _pace.Fraction(seconds);
+        }
+        else
+        {
+            seconds = (DateTime.UtcNow - _silentStart).TotalSeconds;
+            fraction = Math.Clamp(seconds / SpeechPace.QuietHold.TotalSeconds, 0, 1);
+        }
+        var offset = ReadScroll.Offset(fraction, room + view, view);
+        _scroll.ScrollToVerticalOffset(offset);
+        if (fraction >= 0.995)
+        {
+            _scroll.ScrollToVerticalOffset(room);
+            _done = true;
+            _timer.Stop();
+        }
+    }
 }

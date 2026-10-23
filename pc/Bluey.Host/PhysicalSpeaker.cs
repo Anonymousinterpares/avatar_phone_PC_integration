@@ -3,6 +3,7 @@ using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
 using Bluey.Audio;
+using Bluey.Speech;
 
 namespace Bluey.Host;
 
@@ -19,11 +20,20 @@ public sealed class PhysicalSpeaker : IDisposable
     private bool _heard;
     public event Action? Drained;
     private double _pos;
+    private int _clipSamples;
+    private bool _originSet;
+    private double _originPosition;
+    private double _originPaddingFrames;
+    private double _heardSeconds;
+    private long _originTicks;
+    private bool _clockLogged;
     private Thread? _thread;
     private volatile bool _running;
 
     private IAudioClient? _client;
     private IAudioRenderClient? _render;
+    private IAudioClock? _clock;
+    private ulong _clockFreq;
     private string? _deviceId;
     private int _mixRate;
     private int _channels;
@@ -38,9 +48,11 @@ public sealed class PhysicalSpeaker : IDisposable
             {
                 _count = 0;
                 _pos = 0;
+                _clipSamples = 0;
+                ResetClock();
                 _rate = sampleRate;
             }
-            var cap = _rate * 3;
+            var cap = _rate * 120;
             var incoming = mono.Length;
             if (_count >= cap) return;
             if (_count + incoming > cap) incoming = cap - _count;
@@ -52,6 +64,7 @@ public sealed class PhysicalSpeaker : IDisposable
             }
             Array.Copy(mono, 0, _samples, _count, incoming);
             _count += incoming;
+            _clipSamples += incoming;
             _heard = true;
             if (_thread == null)
             {
@@ -70,9 +83,34 @@ public sealed class PhysicalSpeaker : IDisposable
             drained = _heard;
             _count = 0;
             _pos = 0;
+            _clipSamples = 0;
+            ResetClock();
             _heard = false;
         }
         if (drained) Drained?.Invoke();
+    }
+
+    /// <summary>
+    /// Seconds of the current clip the speakers have reached.
+    /// This is the device play cursor, so it stays put while the device is stalled.
+    /// </summary>
+    public double HeardSeconds()
+    {
+        lock (_gate)
+        {
+            if (_rate < 8000 || _clipSamples <= 0) return 0;
+            return _heardSeconds;
+        }
+    }
+
+    private void ResetClock()
+    {
+        _originSet = false;
+        _originPosition = 0;
+        _originPaddingFrames = 0;
+        _heardSeconds = 0;
+        _originTicks = 0;
+        _clockLogged = false;
     }
 
     public void Dispose()
@@ -170,6 +208,18 @@ public sealed class PhysicalSpeaker : IDisposable
                     Thread.Sleep(200);
                     continue;
                 }
+                ulong position = 0;
+                var havePosition = _clock != null && _clockFreq > 0 && _clock.GetPosition(out position, out _) == 0;
+                if (havePosition) PublishDevice(position);
+                else if (_clockFreq == 0) PublishQueue((int)padding);
+                if (ReadyToFinish()) continue;
+                var drainOnly = false;
+                lock (_gate) drainOnly = _count == 0 && _clockFreq == 0;
+                if (drainOnly)
+                {
+                    Thread.Sleep(8);
+                    continue;
+                }
                 var available = size - padding;
                 if (available < size / 8)
                 {
@@ -184,7 +234,13 @@ public sealed class PhysicalSpeaker : IDisposable
                 }
                 var audible = WriteFrames(data, (int)write);
                 _render.ReleaseBuffer(write, audible ? 0u : 2u);
-                if (audible == false && TookLast()) Drained?.Invoke();
+                if (audible && !havePosition && _clock != null && _clock.GetPosition(out var retry, out _) == 0)
+                {
+                    position = retry;
+                    havePosition = true;
+                }
+                if (audible && havePosition) NoteOrigin(position, (int)padding);
+                if (ReadyToFinish()) continue;
                 Thread.Sleep(8);
             }
             catch
@@ -196,14 +252,93 @@ public sealed class PhysicalSpeaker : IDisposable
         CloseClient();
     }
 
-    private bool TookLast()
+    private void NoteOrigin(double devicePosition, int paddingFrames)
+    {
+        var log = false;
+        lock (_gate)
+        {
+            if (_originSet) return;
+            _originPosition = devicePosition;
+            _originPaddingFrames = Math.Max(0, paddingFrames);
+            _originTicks = DateTime.UtcNow.Ticks;
+            _originSet = true;
+            log = !_clockLogged;
+            _clockLogged = true;
+        }
+        if (log) SpeechLog.Write("playback clock is the device position");
+    }
+
+    private void PublishDevice(double devicePosition)
     {
         lock (_gate)
         {
-            if (!_heard || _count > 0) return false;
-            _heard = false;
-            return true;
+            if (!_originSet || _rate < 8000 || _mixRate < 8000 || _clipSamples <= 0) return;
+            var clipSeconds = _clipSamples / (double)_rate;
+            _heardSeconds = WaveCursor.HeardSecondsFromDevice(
+                devicePosition,
+                _originPosition,
+                _clockFreq,
+                _originPaddingFrames,
+                _mixRate,
+                clipSeconds,
+                _heardSeconds);
         }
+    }
+
+    private void PublishQueue(int paddingFrames)
+    {
+        var log = false;
+        lock (_gate)
+        {
+            if (_rate < 8000 || _mixRate < 8000 || _clipSamples <= 0) return;
+            var released = _clipSamples - _count;
+            var queued = paddingFrames * ((double)_rate / _mixRate);
+            _heardSeconds = WaveCursor.HeardSamplesFromQueue(released, queued, _clipSamples, _heardSeconds * _rate) / _rate;
+            if (_heardSeconds > 0 && !_clockLogged)
+            {
+                _clockLogged = true;
+                log = true;
+            }
+        }
+        if (log) SpeechLog.Write("playback clock is samples left in the device");
+    }
+
+    /// <summary>
+    /// The clip is finished when our buffer is empty and the device cursor has reached the last sample.
+    /// A stall keeps the cursor back, so the queue and the scroll wait with the sound.
+    /// </summary>
+    private bool ReadyToFinish()
+    {
+        var done = false;
+        string? report = null;
+        lock (_gate)
+        {
+            if (!_heard || _count > 0) return false;
+            var clipSeconds = _rate >= 8000 && _clipSamples > 0 ? _clipSamples / (double)_rate : 0;
+            if (clipSeconds <= 0 || (_clockFreq == 0 && _heardSeconds <= 0))
+            {
+                _heard = false;
+                done = true;
+            }
+            else if (_heardSeconds < clipSeconds - 0.03)
+            {
+                return false;
+            }
+            else
+            {
+                var wall = _originTicks == 0
+                    ? 0
+                    : (DateTime.UtcNow.Ticks - _originTicks) / (double)TimeSpan.TicksPerSecond;
+                report = "heard " + _heardSeconds.ToString("0.00")
+                    + "s of clip " + clipSeconds.ToString("0.00")
+                    + "s, wall " + wall.ToString("0.00") + "s";
+                _heard = false;
+                done = true;
+            }
+        }
+        if (report != null) SpeechLog.Write(report);
+        if (done) Drained?.Invoke();
+        return done;
     }
 
     private bool EnsureClient()
@@ -243,6 +378,13 @@ public sealed class PhysicalSpeaker : IDisposable
         if (client.GetService(ref iidRender, out var service) != 0 || service is not IAudioRenderClient render)
             return false;
         if (client.Start() != 0) return false;
+        var iidClock = new Guid("CD63314F-3FBA-4a1b-812C-EF96358728E7");
+        if (client.GetService(ref iidClock, out var clockService) == 0 && clockService is IAudioClock clock
+            && clock.GetFrequency(out var frequency) == 0 && frequency > 0)
+        {
+            _clock = clock;
+            _clockFreq = frequency;
+        }
         _client = client;
         _render = render;
         _deviceId = deviceId;
@@ -335,6 +477,9 @@ public sealed class PhysicalSpeaker : IDisposable
         try { _client?.Stop(); } catch { }
         _client = null;
         _render = null;
+        _clock = null;
+        _clockFreq = 0;
+        _originSet = false;
         _deviceId = null;
     }
 
@@ -395,6 +540,15 @@ public sealed class PhysicalSpeaker : IDisposable
     {
         [PreserveSig] int GetBuffer(uint frames, out IntPtr data);
         [PreserveSig] int ReleaseBuffer(uint frames, uint flags);
+    }
+
+    [ComImport]
+    [Guid("CD63314F-3FBA-4a1b-812C-EF96358728E7"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    private interface IAudioClock
+    {
+        [PreserveSig] int GetFrequency(out ulong frequency);
+        [PreserveSig] int GetPosition(out ulong position, out ulong qpcPosition);
+        [PreserveSig] int GetCharacteristics(out uint characteristics);
     }
 
     [DllImport("ole32.dll")]

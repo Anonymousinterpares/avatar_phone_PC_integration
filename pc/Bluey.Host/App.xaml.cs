@@ -43,15 +43,41 @@ public partial class App : System.Windows.Application
         var desk = new WindowsDesk(() => store.Load().ComputerControl, visible => _overlay.SetVisible(visible));
         _speaker = new SupertonicSpeaker(speech);
         _session = new CharacterSession(brains, desk, _speaker);
-        _session.CaptionChanged += text =>
+        _overlay.BindSpeechClock(() => _speaker.HeardSeconds());
+        _speaker.PaceReady += marks => _overlay.FollowSpeech(marks);
+        _session.CaptionChanged += (text, voiced) =>
         {
-            _overlay.SetCaption(text);
+            _overlay.SetCaption(text, voiced);
             if (string.IsNullOrWhiteSpace(text)) _overlay.EndTalk();
-            else if (speech.Current.TextToSpeech) _overlay.TalkForAudio();
-            else _overlay.TalkForText();
+            else if (speech.Current.TextToSpeech)
+            {
+                _overlay.HoldCaption();
+                _overlay.TalkForAudio();
+            }
+            else
+            {
+                _overlay.ReleaseCaption();
+                _overlay.TalkForText();
+            }
         };
-        _speaker.PlaybackFinished += () => _overlay.EndTalk();
-        _speaker.Failed += _ => _overlay.EndTalk();
+        _session.OutputsIdle += () => _overlay.ReleaseCaption();
+        _speaker.PlaybackFinished += () =>
+        {
+            _overlay.EndTalk();
+            _overlay.ReleaseCaption();
+        };
+        _speaker.Failed += message =>
+        {
+            SpeechLog.Write("failed: " + message);
+            _overlay.EndTalk();
+            _overlay.ReleaseCaption();
+        };
+        _session.SpeechGaveUp += message =>
+        {
+            SpeechLog.Write(message);
+            _overlay.EndTalk();
+            _overlay.ReleaseCaption();
+        };
         _session.PointChanged += point => _overlay.PointAt(point);
         _session.ActivityChanged += busy => _overlay.SetThinking(busy);
         _session.PoseRequested += name => _overlay.PlayPose(name);

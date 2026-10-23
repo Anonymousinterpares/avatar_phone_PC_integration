@@ -220,9 +220,30 @@ public static class SpokenSpan
     }
 }
 
+public static class SpeechLog
+{
+    public static void Write(string message)
+    {
+        var line = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff ") + message;
+        System.Diagnostics.Trace.WriteLine("Bluey " + line);
+        try
+        {
+            var dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Bluey");
+            Directory.CreateDirectory(dir);
+            File.AppendAllText(Path.Combine(dir, "tts.log"), line + Environment.NewLine);
+        }
+        catch (IOException)
+        {
+            // The log is a diagnostic. Speech still runs if it cannot be written.
+        }
+    }
+}
+
 public interface IReplySpeaker
 {
     bool Enabled { get; }
+    event Action? PlaybackFinished;
+    event Action<string>? Failed;
     void Speak(string text);
     void Stop();
 }
