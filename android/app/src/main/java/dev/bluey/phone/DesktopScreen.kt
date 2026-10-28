@@ -45,7 +45,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.layout.positionInParent
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.IntOffset
@@ -186,6 +188,9 @@ fun DesktopViewScreen(
     var panMode by remember { mutableStateOf(false) }
     var barHeightPx by remember { mutableIntStateOf(0) }
     var lastCornerAt by remember { mutableStateOf(0L) }
+    var lastBarAt by remember { mutableStateOf(0L) }
+    var buttonRowTop by remember { mutableFloatStateOf(0f) }
+    var buttonRowBottom by remember { mutableFloatStateOf(-1f) }
     var localFps by remember(fps) { mutableIntStateOf(fps) }
     var localQuality by remember(quality) { mutableIntStateOf(quality) }
     var localScale by remember(scale) { mutableFloatStateOf(scale) }
@@ -261,9 +266,7 @@ fun DesktopViewScreen(
                         val canvasH0 = size.height.toFloat().coerceAtLeast(1f)
                         val corner = minOf(canvasW0, canvasH0) * 0.22f
                         // A touch that starts here must not click or move the mouse. The second tap shows the bar.
-                        val revealZone = isRevealCorner(down.position, canvasW0, corner) &&
-                            zoomScale > 1.05f &&
-                            !controlsOpen
+                        val revealZone = isRevealCorner(down.position, canvasW0, corner) && !controlsOpen
 
                         while (true) {
                             val event = awaitPointerEvent()
@@ -409,11 +412,32 @@ fun DesktopViewScreen(
                     .fillMaxWidth()
                     .onSizeChanged { barHeightPx = it.height }
                     .pointerInput(Unit) {
-                        // Keeps the bar's own area as the hit target, including gaps between buttons.
-                        awaitPointerEventScope {
+                        // Final pass so a button keeps the tap. An empty double-tap on the button row hides it.
+                        awaitEachGesture {
+                            val down = awaitFirstDown(pass = PointerEventPass.Final)
+                            val onButtonRow = down.position.y >= buttonRowTop && down.position.y <= buttonRowBottom
+                            down.consume()
+                            val origin = down.position
+                            var moved = !onButtonRow
                             while (true) {
                                 val event = awaitPointerEvent(PointerEventPass.Final)
-                                event.changes.forEach { if (!it.isConsumed) it.consume() }
+                                if (event.changes.count { it.pressed } > 1) moved = true
+                                event.changes.forEach { change ->
+                                    if (hypot(change.position.x - origin.x, change.position.y - origin.y) > 48f) {
+                                        moved = true
+                                    }
+                                    if (!change.isConsumed) change.consume()
+                                }
+                                if (event.changes.none { it.pressed }) break
+                            }
+                            if (!moved) {
+                                val now = System.currentTimeMillis()
+                                if (isSecondTap(now, lastBarAt)) {
+                                    lastBarAt = 0L
+                                    controlsOpen = false
+                                } else {
+                                    lastBarAt = now
+                                }
                             }
                         }
                     },
@@ -467,6 +491,11 @@ fun DesktopViewScreen(
         }
             Row(
                 modifier = Modifier
+                    .onGloballyPositioned { coords ->
+                        val top = coords.positionInParent().y
+                        buttonRowTop = top
+                        buttonRowBottom = top + coords.size.height
+                    }
                     .fillMaxWidth()
                     .background(Color(0xFF1A1A2E))
                     .padding(horizontal = 6.dp, vertical = 4.dp),

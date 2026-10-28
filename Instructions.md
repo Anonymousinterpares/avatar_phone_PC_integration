@@ -110,7 +110,7 @@ On the phone:
 2. Tap **Help someone**.
 3. Type the code and tap **Watch**.
 
-You can see the screen. Touches do not click. Two fingers still zoom the picture so you can look closer. The hand button, next to −, slides the picture with one finger. While that button is on, a finger does not click. When the picture is zoomed in, the buttons hide. Double-tap the top-right corner to show them again. They do nothing while they are hidden. Past 120% zoom, that part of the screen becomes sharper.
+You can see the screen. Touches do not click. Two fingers still zoom the picture so you can look closer. The hand button, next to −, slides the picture with one finger. While that button is on, a finger does not click. When the picture is zoomed in, the buttons hide. Double-tap an empty part of the button bar to hide it. Double-tap the top-right corner to show it again. The buttons do nothing while they are hidden. Past 120% zoom, that part of the screen becomes sharper.
 
 The bar then says a helper is watching. **Stop help** on that bar ends it. **Cancel** does that before anyone has joined. You can drag the bar, or hide it, without ending the session.
 
@@ -176,7 +176,7 @@ The phone now shows the computer screen, and touches on the phone use that compu
 - The hand button, next to **−**, lets one finger drag the picture. Tap the hand again to go back to the mouse. While the hand is on, a finger does not click or move the mouse.
 - Two fingers pinch to zoom. Two fingers drag to move around while zoomed. This works with the hand on or off.
 - The **+** and **−** buttons zoom as well. The percentage button returns to the normal view.
-- When the picture is zoomed in, it fills the phone and the buttons go away. They cannot be pressed while you cannot see them. Double-tap the top-right corner to bring them back. They work again only while you can see them. The square button hides them again.
+- When the picture is zoomed in, it fills the phone and the buttons go away. They cannot be pressed while you cannot see them. Double-tap an empty part of the button bar, not a button, to hide it. Double-tap the top-right corner to bring it back. The buttons work again only while you can see them.
 - Past 120% zoom, the part of the screen you are looking at becomes sharper.
 - The keyboard button types on the computer.
 - **Back** leaves the screen and returns to the blueberry.
