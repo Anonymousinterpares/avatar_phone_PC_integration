@@ -186,7 +186,7 @@ Use this when you are away and the other person is sitting at the computer. You 
 
 On their computer: right-click Bluey, choose **Allow help…**, and read the short code on the bar. It works one time, for 10 minutes. The bar can be dragged or hidden. Hiding it does not end the session.
 
-On the phone: connect with the `100.` address, tap **Help someone**, type the code, and tap **Watch**. Touches do not click yet. Two fingers still zoom. The hand button slides the picture with one finger and, while it is on, that finger does not click. Double-tap an empty part of the button bar to hide it, and double-tap the top-right corner to show it again. The buttons stay off while you cannot see them. Past 120% zoom, that part of the screen becomes sharper.
+On the phone: connect with the `100.` address, tap **Help someone**, type the code, and tap **Watch**. Touches do not click yet. Two fingers still zoom. The hand button slides the picture with one finger and, while it is on, that finger does not click. Double-tap an empty part of the button bar to hide it, and double-tap the top-right corner to show it again. The buttons stay off while you cannot see them. Past 120% zoom, that part of the screen becomes sharper, and the phone keeps a margin ahead of a swipe.
 
 Press **Hold to talk** and let go when you are done. They hear you on the computer speakers. Muting the computer's sound sends that sound to the phone and leaves the speakers quiet. Your voice still comes out of the speakers, and so do Bluey's spoken replies. While you hold the button, the computer's sound stops on your phone, so your voice does not bounce back out of their speakers.
 
@@ -216,7 +216,7 @@ On that screen:
 - The hand button next to **−** turns on one-finger dragging of the picture. Mouse clicks and mouse moves pause until you tap the hand again. Two fingers still pinch and drag in either mode.
 - Two fingers pinch to zoom, from 1.0x to 5.0x. Two fingers drag moves around while zoomed. **+**, **−**, and the percentage button do the same. The percentage button returns to the normal view.
 - When zoomed past the normal view, the picture fills the screen and the top buttons are taken off the screen, so they cannot be pressed. Double-tap an empty part of the button bar, not a button, to hide it. Double-tap the top-right corner to show it again. The buttons work only while that bar is visible.
-- Past 120% zoom, the phone tells the PC which part of the desktop is on screen. The PC sends that area at the screen's own resolution and JPEG quality 95.
+- Past 120% zoom, the phone asks for the area on screen plus a margin in the direction of the swipe, and never more pixels than the phone itself can show. A quicker picture arrives while the view is moving. A quality-95 picture replaces it once the view stays still. The phone keeps the last few sharp areas. If a swipe still gets ahead of them, the edge of the sharp picture stretches for a moment instead of leaving an empty gap.
 - The gear opens live sliders: frames per second from 1 to 30, JPEG quality from 10% to 95%, and resolution scale from 10% to 100%. Grayscale cuts the amount of data by about three times on a slow connection.
 - The keyboard button types into the focused window on the PC.
 - The rotate button switches landscape and portrait. The app hides the phone's system bars.

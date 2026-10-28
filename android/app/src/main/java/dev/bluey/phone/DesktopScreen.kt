@@ -32,17 +32,22 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -55,6 +60,7 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
+import kotlin.math.abs
 import kotlin.math.hypot
 import kotlin.math.roundToInt
 
@@ -170,7 +176,7 @@ fun DesktopViewScreen(
     onSettingsChanged: (fps: Int, quality: Int, scale: Float, grayscale: Boolean) -> Unit,
     onAudioSettingsChanged: (enabled: Boolean, quality: String, mutePc: Boolean) -> Unit = { _, _, _ -> },
     onTouch: (action: String, x: Float, y: Float, extra: Map<String, Any>) -> Unit,
-    onCropChanged: (cropX: Float, cropY: Float, cropW: Float, cropH: Float) -> Unit = { _, _, _, _ -> },
+    onCropChanged: (cropX: Float, cropY: Float, cropW: Float, cropH: Float, maxW: Int, maxH: Int) -> Unit = { _, _, _, _, _, _ -> },
     onKeyboard: () -> Unit,
     onBack: () -> Unit,
     onToggleOrientation: () -> Unit,
@@ -207,28 +213,111 @@ fun DesktopViewScreen(
     val currentOnCropChanged by rememberUpdatedState(onCropChanged)
     val baseFrameW = frame?.width ?: 0
     val baseFrameH = frame?.height ?: 0
+    val currentBaseW by rememberUpdatedState(baseFrameW)
+    val currentBaseH by rememberUpdatedState(baseFrameH)
+    val sharpTiles = remember { mutableStateListOf<SharpTile>() }
+    var frameClock by remember { mutableLongStateOf(0L) }
 
-    // Past 120% zoom, ask the PC for native-quality pixels of the whole area
-    // of the full desktop image that is currently inside the phone screen.
-    LaunchedEffect(zoomScale, panOffset, canvasSize, baseFrameW, baseFrameH) {
-        if (zoomScale <= SharpViewZoom) {
-            currentOnCropChanged(0f, 0f, 1f, 1f)
-            return@LaunchedEffect
+    // Ask ahead of the finger. A still wait would leave the new area soft until the swipe ends.
+    LaunchedEffect(Unit) {
+        var lastHalo: DesktopFraction? = null
+        var lastSharp = false
+        var lastViewAt = 0L
+        var lastView = DesktopFraction(0f, 0f, 1f, 1f)
+        var velX = 0f
+        var velY = 0f
+        while (true) {
+            val zoom = zoomScale
+            val canvasW = canvasSize.width
+            val canvasH = canvasSize.height
+            val imgW = currentBaseW
+            val imgH = currentBaseH
+            if (zoom <= SharpViewZoom || imgW <= 0 || imgH <= 0 || canvasW <= 0 || canvasH <= 0) {
+                if (lastSharp || lastHalo == null) {
+                    currentOnCropChanged(0f, 0f, 1f, 1f, 0, 0)
+                    lastHalo = DesktopFraction(0f, 0f, 1f, 1f)
+                    lastSharp = false
+                }
+                velX = 0f
+                velY = 0f
+                delay(48)
+                continue
+            }
+            val view = visibleDesktopFraction(
+                canvasW.toFloat(),
+                canvasH.toFloat(),
+                imgW.toFloat(),
+                imgH.toFloat(),
+                zoom,
+                panOffset,
+            )
+            if (view == null) {
+                delay(32)
+                continue
+            }
+            val now = System.nanoTime()
+            val dt = (now - lastViewAt) / 1_000_000_000f
+            if (lastViewAt != 0L && dt in 0.008f..0.25f) {
+                velX = velX * 0.55f + ((view.x - lastView.x) / dt) * 0.45f
+                velY = velY * 0.55f + ((view.y - lastView.y) / dt) * 0.45f
+            } else if (dt > 0.25f) {
+                velX = 0f
+                velY = 0f
+            }
+            lastView = view
+            lastViewAt = now
+            val ahead = DesktopFraction(
+                (view.x + velX * 0.12f).coerceIn(0f, (1f - view.w).coerceAtLeast(0f)),
+                (view.y + velY * 0.12f).coerceIn(0f, (1f - view.h).coerceAtLeast(0f)),
+                view.w,
+                view.h,
+            )
+            val held = lastHalo
+            if (!lastSharp || held == null || !fractionContains(held, ahead, 0.22f)) {
+                val halo = travelHalo(view, velX, velY)
+                val maxW = (canvasW * (halo.w / view.w)).roundToInt().coerceIn(1, canvasW * 3)
+                val maxH = (canvasH * (halo.h / view.h)).roundToInt().coerceIn(1, canvasH * 3)
+                currentOnCropChanged(halo.x, halo.y, halo.w, halo.h, maxW, maxH)
+                lastHalo = halo
+                lastSharp = true
+            }
+            delay(32)
         }
-        if (baseFrameW <= 0 || baseFrameH <= 0 || canvasSize.width <= 0 || canvasSize.height <= 0) {
-            return@LaunchedEffect
+    }
+
+    LaunchedEffect(cropFrame, cropRect) {
+        val bmp = cropFrame
+        val rect = cropRect
+        if (bmp == null || rect == null || rect.width < 0.01f || rect.height < 0.01f) return@LaunchedEffect
+        val image = bmp.asImageBitmap()
+        val now = System.nanoTime()
+        val existing = sharpTiles.indexOfLast { sameCrop(it.rect, rect) }
+        if (existing >= 0) {
+            val kept = sharpTiles[existing].born
+            sharpTiles.removeAt(existing)
+            sharpTiles.add(SharpTile(image, rect, kept))
+        } else {
+            sharpTiles.add(SharpTile(image, rect, now))
         }
-        delay(250)
-        val view = visibleDesktopFraction(
-            canvasSize.width.toFloat(),
-            canvasSize.height.toFloat(),
-            baseFrameW.toFloat(),
-            baseFrameH.toFloat(),
-            zoomScale,
-            panOffset,
-        )
-        if (view == null) currentOnCropChanged(0f, 0f, 1f, 1f)
-        else currentOnCropChanged(view.x, view.y, view.w, view.h)
+        while (sharpTiles.size > 4) {
+            val newest = sharpTiles.last().rect
+            val victim = sharpTiles.indexOfFirst { !rectsTouch(it.rect, newest, 0.02f) }
+            if (victim in 0 until sharpTiles.lastIndex) sharpTiles.removeAt(victim)
+            else sharpTiles.removeAt(0)
+        }
+    }
+
+    val zoomedPastSharp = zoomScale > SharpViewZoom
+    LaunchedEffect(zoomedPastSharp) {
+        if (!zoomedPastSharp) sharpTiles.clear()
+    }
+    val newestBorn = sharpTiles.lastOrNull()?.born ?: 0L
+    LaunchedEffect(newestBorn) {
+        if (newestBorn == 0L) return@LaunchedEffect
+        while (System.nanoTime() - newestBorn < 70_000_000L) {
+            withFrameNanos { frameClock = it }
+        }
+        frameClock = System.nanoTime()
     }
 
     var talking by remember { mutableStateOf(false) }
@@ -381,7 +470,7 @@ fun DesktopViewScreen(
                 },
         ) {
             if (frame != null) {
-                DesktopPicture(frame, cropFrame, cropRect, zoomScale, panOffset)
+                DesktopPicture(frame, sharpTiles, frameClock, zoomScale, panOffset)
             } else {
                 Box(
                     modifier = Modifier.fillMaxSize(),
@@ -732,13 +821,12 @@ fun DesktopViewScreen(
 @Composable
 private fun DesktopPicture(
     frame: Bitmap,
-    cropFrame: Bitmap?,
-    cropRect: Rect?,
+    tiles: List<SharpTile>,
+    frameClock: Long,
     zoomScale: Float,
     panOffset: Offset,
 ) {
     val imageBitmap = remember(frame) { frame.asImageBitmap() }
-    val cropImageBitmap = remember(cropFrame) { cropFrame?.asImageBitmap() }
     Canvas(modifier = Modifier.fillMaxSize()) {
         val canvasW = size.width
         val canvasH = size.height
@@ -766,22 +854,92 @@ private fun DesktopPicture(
             dstSize = IntSize(totalW.roundToInt().coerceAtLeast(1), totalH.roundToInt().coerceAtLeast(1)),
         )
 
-        if (zoomScale > SharpViewZoom && cropImageBitmap != null && cropRect != null &&
-            cropRect.width > 0.01f && cropRect.height > 0.01f &&
-            (cropRect.width < 0.98f || cropRect.height < 0.98f)
-        ) {
-            val cropDstLeft = drawLeft + cropRect.left * totalW
-            val cropDstTop = drawTop + cropRect.top * totalH
-            val cropDstW = cropRect.width * totalW
-            val cropDstH = cropRect.height * totalH
+        if (zoomScale <= SharpViewZoom || tiles.isEmpty()) return@Canvas
+        val now = if (frameClock > 0L) frameClock else System.nanoTime()
+        val newest = tiles.last()
+        val newestLeft = drawLeft + newest.rect.left * totalW
+        val newestTop = drawTop + newest.rect.top * totalH
+        val newestW = newest.rect.width * totalW
+        val newestH = newest.rect.height * totalH
+        drawEdgeStretch(newest.image, newestLeft, newestTop, newestW, newestH, canvasW, canvasH)
+        for (tile in tiles) {
+            val age = now - tile.born
+            val alpha = (age / 70_000_000f).coerceIn(0f, 1f)
+            val left = drawLeft + tile.rect.left * totalW
+            val top = drawTop + tile.rect.top * totalH
             drawImage(
-                image = cropImageBitmap,
+                image = tile.image,
                 srcOffset = IntOffset.Zero,
-                srcSize = IntSize(cropImageBitmap.width, cropImageBitmap.height),
-                dstOffset = IntOffset(cropDstLeft.roundToInt(), cropDstTop.roundToInt()),
-                dstSize = IntSize(cropDstW.roundToInt().coerceAtLeast(1), cropDstH.roundToInt().coerceAtLeast(1)),
+                srcSize = IntSize(tile.image.width, tile.image.height),
+                dstOffset = IntOffset(left.roundToInt(), top.roundToInt()),
+                dstSize = IntSize((tile.rect.width * totalW).roundToInt().coerceAtLeast(1), (tile.rect.height * totalH).roundToInt().coerceAtLeast(1)),
+                alpha = alpha,
             )
         }
+    }
+}
+
+private fun DrawScope.drawEdgeStretch(
+    image: ImageBitmap,
+    dstLeft: Float,
+    dstTop: Float,
+    dstW: Float,
+    dstH: Float,
+    canvasW: Float,
+    canvasH: Float,
+) {
+    val srcW = image.width
+    val srcH = image.height
+    if (srcW < 2 || srcH < 2 || dstW < 2f || dstH < 2f) return
+    val dstRight = dstLeft + dstW
+    val dstBottom = dstTop + dstH
+    if (dstLeft <= 1f && dstTop <= 1f && dstRight >= canvasW - 1f && dstBottom >= canvasH - 1f) return
+    val limitX = canvasW * 0.45f
+    val limitY = canvasH * 0.45f
+    val gapLeft = if (dstLeft > 0f) minOf(dstLeft, limitX) else 0f
+    val gapTop = if (dstTop > 0f) minOf(dstTop, limitY) else 0f
+    val gapRight = if (dstRight < canvasW) minOf(canvasW - dstRight, limitX) else 0f
+    val gapBottom = if (dstBottom < canvasH) minOf(canvasH - dstBottom, limitY) else 0f
+    val top = dstTop.roundToInt()
+    val height = dstH.roundToInt().coerceAtLeast(1)
+    if (gapLeft > 1f) {
+        drawImage(
+            image,
+            srcOffset = IntOffset(0, 0),
+            srcSize = IntSize(1, srcH),
+            dstOffset = IntOffset((dstLeft - gapLeft).roundToInt(), top),
+            dstSize = IntSize(gapLeft.roundToInt().coerceAtLeast(1), height),
+        )
+    }
+    if (gapRight > 1f) {
+        drawImage(
+            image,
+            srcOffset = IntOffset(srcW - 1, 0),
+            srcSize = IntSize(1, srcH),
+            dstOffset = IntOffset(dstRight.roundToInt(), top),
+            dstSize = IntSize(gapRight.roundToInt().coerceAtLeast(1), height),
+        )
+    }
+    // Top and bottom strips include the corners, so a diagonal swipe does not leave a soft square there.
+    val stripLeft = dstLeft - gapLeft
+    val stripW = (gapLeft + dstW + gapRight).roundToInt().coerceAtLeast(1)
+    if (gapTop > 1f) {
+        drawImage(
+            image,
+            srcOffset = IntOffset(0, 0),
+            srcSize = IntSize(srcW, 1),
+            dstOffset = IntOffset(stripLeft.roundToInt(), (dstTop - gapTop).roundToInt()),
+            dstSize = IntSize(stripW, gapTop.roundToInt().coerceAtLeast(1)),
+        )
+    }
+    if (gapBottom > 1f) {
+        drawImage(
+            image,
+            srcOffset = IntOffset(0, srcH - 1),
+            srcSize = IntSize(srcW, 1),
+            dstOffset = IntOffset(stripLeft.roundToInt(), dstBottom.roundToInt()),
+            dstSize = IntSize(stripW, gapBottom.roundToInt().coerceAtLeast(1)),
+        )
     }
 }
 
@@ -812,6 +970,83 @@ private fun isRevealCorner(pos: Offset, width: Float, cornerPx: Float): Boolean 
 private fun isSecondTap(now: Long, lastAt: Long): Boolean {
     val gap = now - lastAt
     return gap in 40L..400L
+}
+
+private data class SharpTile(val image: ImageBitmap, val rect: Rect, val born: Long)
+
+private fun sameCrop(a: Rect, b: Rect): Boolean {
+    return abs(a.left - b.left) < 0.02f && abs(a.top - b.top) < 0.02f &&
+        abs(a.width - b.width) < 0.02f && abs(a.height - b.height) < 0.02f
+}
+
+private fun rectsTouch(a: Rect, b: Rect, pad: Float): Boolean {
+    return a.left < b.right + pad && a.right > b.left - pad && a.top < b.bottom + pad && a.bottom > b.top - pad
+}
+
+private fun fractionContains(outer: DesktopFraction, inner: DesktopFraction, pad: Float): Boolean {
+    val left = (inner.x - inner.w * pad).coerceAtLeast(0f)
+    val top = (inner.y - inner.h * pad).coerceAtLeast(0f)
+    val right = (inner.x + inner.w + inner.w * pad).coerceAtMost(1f)
+    val bottom = (inner.y + inner.h + inner.h * pad).coerceAtMost(1f)
+    return left >= outer.x - 0.002f &&
+        top >= outer.y - 0.002f &&
+        right <= outer.x + outer.w + 0.002f &&
+        bottom <= outer.y + outer.h + 0.002f
+}
+
+private fun travelHalo(view: DesktopFraction, velX: Float, velY: Float): DesktopFraction {
+    val movingX = abs(velX) > view.w * 0.4f
+    val movingY = abs(velY) > view.h * 0.4f
+    val leftMargin = when {
+        movingX && velX < 0f -> view.w * 1.05f
+        movingX -> view.w * 0.28f
+        else -> view.w * 0.55f
+    }
+    val rightMargin = when {
+        movingX && velX > 0f -> view.w * 1.05f
+        movingX -> view.w * 0.28f
+        else -> view.w * 0.55f
+    }
+    val topMargin = when {
+        movingY && velY < 0f -> view.h * 1.05f
+        movingY -> view.h * 0.28f
+        else -> view.h * 0.55f
+    }
+    val bottomMargin = when {
+        movingY && velY > 0f -> view.h * 1.05f
+        movingY -> view.h * 0.28f
+        else -> view.h * 0.55f
+    }
+    val shiftX = if (movingX) velX * 0.10f else 0f
+    val shiftY = if (movingY) velY * 0.10f else 0f
+    return clampFraction(
+        view.x + shiftX - leftMargin,
+        view.y + shiftY - topMargin,
+        view.w + leftMargin + rightMargin,
+        view.h + topMargin + bottomMargin,
+    )
+}
+
+private fun clampFraction(x: Float, y: Float, w: Float, h: Float): DesktopFraction {
+    var left = x
+    var top = y
+    var width = w.coerceAtLeast(0.02f)
+    var height = h.coerceAtLeast(0.02f)
+    if (left < 0f) {
+        width += left
+        left = 0f
+    }
+    if (top < 0f) {
+        height += top
+        top = 0f
+    }
+    if (left + width > 1f) width = 1f - left
+    if (top + height > 1f) height = 1f - top
+    width = width.coerceIn(0.02f, 1f)
+    height = height.coerceIn(0.02f, 1f)
+    if (left + width > 1f) left = (1f - width).coerceAtLeast(0f)
+    if (top + height > 1f) top = (1f - height).coerceAtLeast(0f)
+    return DesktopFraction(left, top, width, height)
 }
 
 private const val SharpViewZoom = 1.2f

@@ -16,11 +16,10 @@ public sealed class DesktopStreamer : IDisposable
     private int _quality = 60;
     private double _scale = 0.5;
     private bool _grayscale;
-    private double _cropX = 0;
-    private double _cropY = 0;
-    private double _cropW = 1.0;
-    private double _cropH = 1.0;
-    private bool _zoomActive;
+    private readonly object _cropGate = new();
+    private CropRequest _crop = CropRequest.Normal();
+    private int _generation;
+    private CancellationTokenSource? _wake;
 
     public bool Running => _cancel != null && !_cancel.IsCancellationRequested;
 
@@ -32,11 +31,11 @@ public sealed class DesktopStreamer : IDisposable
         _quality = Math.Clamp(quality, 10, 95);
         _scale = Math.Clamp(scale, 0.1, 1.0);
         _grayscale = grayscale;
-        _zoomActive = false;
-        _cropX = 0;
-        _cropY = 0;
-        _cropW = 1.0;
-        _cropH = 1.0;
+        lock (_cropGate)
+        {
+            _crop = CropRequest.Normal();
+            _generation++;
+        }
         _cancel = new CancellationTokenSource();
         _loop = Task.Run(() => CaptureLoop(_cancel.Token));
     }
@@ -49,35 +48,50 @@ public sealed class DesktopStreamer : IDisposable
         _grayscale = grayscale;
     }
 
-    public void UpdateCrop(double x, double y, double w, double h)
+    public void UpdateCrop(double x, double y, double w, double h, int maxW = 0, int maxH = 0)
     {
-        if (w >= 0.98 && h >= 0.98)
+        var partial = w < 0.98 || h < 0.98;
+        var sharp = w >= 0.01 && h >= 0.01 && (partial || (maxW > 0 && maxH > 0));
+        CropRequest next;
+        if (!sharp)
         {
-            _zoomActive = false;
-            _cropX = 0;
-            _cropY = 0;
-            _cropW = 1.0;
-            _cropH = 1.0;
+            next = CropRequest.Normal();
         }
         else
         {
-            _cropX = Math.Clamp(x, 0, 1);
-            _cropY = Math.Clamp(y, 0, 1);
-            _cropW = Math.Clamp(w, 0, 1.0 - _cropX);
-            _cropH = Math.Clamp(h, 0, 1.0 - _cropY);
-            if (_cropW < 0.01 || _cropH < 0.01)
+            // Keep max >= min. Math.Clamp throws when the crop is pinned to the far edge.
+            var cx = Math.Clamp(x, 0, 0.99);
+            var cy = Math.Clamp(y, 0, 0.99);
+            var cw = Math.Clamp(w, 0.01, Math.Max(0.01, 1.0 - cx));
+            var ch = Math.Clamp(h, 0.01, Math.Max(0.01, 1.0 - cy));
+            next = new CropRequest
             {
-                _zoomActive = false;
-                _cropX = 0;
-                _cropY = 0;
-                _cropW = 1.0;
-                _cropH = 1.0;
-            }
-            else
-            {
-                _zoomActive = true;
-            }
+                X = cx,
+                Y = cy,
+                W = cw,
+                H = ch,
+                MaxW = Math.Max(0, maxW),
+                MaxH = Math.Max(0, maxH),
+                Sharp = true,
+            };
         }
+
+        lock (_cropGate)
+        {
+            // The phone already waits until the view leaves the last halo. A large
+            // "did it move" test here dropped that request and left the old tile in place.
+            if (_crop.Sharp == next.Sharp &&
+                _crop.MaxW == next.MaxW &&
+                _crop.MaxH == next.MaxH &&
+                !CropNoticeablyDifferent(_crop, next))
+            {
+                return;
+            }
+            next.ChangedAt = Environment.TickCount64;
+            _crop = next;
+            _generation++;
+        }
+        Wake();
     }
 
     public void Stop()
@@ -95,29 +109,50 @@ public sealed class DesktopStreamer : IDisposable
 
     public void Dispose() => Stop();
 
+    private void Wake()
+    {
+        CancellationTokenSource? wake;
+        lock (_cropGate) wake = _wake;
+        if (wake == null) return;
+        try
+        {
+            if (!wake.IsCancellationRequested) wake.Cancel();
+        }
+        catch (ObjectDisposedException) { }
+    }
+
     private async Task CaptureLoop(CancellationToken token)
     {
         while (!token.IsCancellationRequested)
         {
             var start = Environment.TickCount64;
+            CropRequest request;
+            int generation;
+            lock (_cropGate)
+            {
+                request = _crop;
+                generation = _generation;
+            }
+            var fps = Math.Max(1, _fps);
+            var stale = false;
+            var sentSharpPreview = false;
             try
             {
                 var screen = Screen.PrimaryScreen ?? Screen.AllScreens[0];
                 var bounds = screen.Bounds;
 
                 Rectangle captureRect;
-                double effectiveScale = _scale;
-                int effectiveQuality = _quality;
                 double sendCropX = 0, sendCropY = 0, sendCropW = 1.0, sendCropH = 1.0;
+                var moving = request.Sharp && Environment.TickCount64 - request.ChangedAt < 140;
+                var effectiveQuality = request.Sharp ? (moving ? 72 : 95) : _quality;
 
-                if (_zoomActive && (_cropW < 0.98 || _cropH < 0.98))
+                if (request.Sharp)
                 {
-                    sendCropX = _cropX;
-                    sendCropY = _cropY;
-                    sendCropW = _cropW;
-                    sendCropH = _cropH;
+                    sendCropX = request.X;
+                    sendCropY = request.Y;
+                    sendCropW = request.W;
+                    sendCropH = request.H;
 
-                    // Native pixels of the whole phone view, not a smaller focus box.
                     var rx = bounds.Left + (int)Math.Floor(sendCropX * bounds.Width);
                     var ry = bounds.Top + (int)Math.Floor(sendCropY * bounds.Height);
                     var rr = bounds.Left + (int)Math.Ceiling((sendCropX + sendCropW) * bounds.Width);
@@ -127,16 +162,21 @@ public sealed class DesktopStreamer : IDisposable
                     rr = Math.Clamp(rr, rx + 1, bounds.Right);
                     rb = Math.Clamp(rb, ry + 1, bounds.Bottom);
                     captureRect = new Rectangle(rx, ry, rr - rx, rb - ry);
-                    effectiveQuality = 95;
-                    effectiveScale = 1.0;
                 }
                 else
                 {
                     captureRect = bounds;
                 }
 
-                var w = Math.Max(1, (int)(captureRect.Width * effectiveScale));
-                var h = Math.Max(1, (int)(captureRect.Height * effectiveScale));
+                var w = Math.Max(1, (int)Math.Round(captureRect.Width * (request.Sharp ? 1.0 : _scale)));
+                var h = Math.Max(1, (int)Math.Round(captureRect.Height * (request.Sharp ? 1.0 : _scale)));
+                if (request.Sharp && request.MaxW > 0 && request.MaxH > 0 && (w > request.MaxW || h > request.MaxH))
+                {
+                    // The phone cannot show more pixels than its own view of this rectangle.
+                    var fit = Math.Min((double)request.MaxW / w, (double)request.MaxH / h);
+                    w = Math.Max(1, (int)Math.Round(w * fit));
+                    h = Math.Max(1, (int)Math.Round(h * fit));
+                }
 
                 using var bitmap = new Bitmap(captureRect.Width, captureRect.Height, PixelFormat.Format32bppArgb);
                 using (var g = Graphics.FromImage(bitmap))
@@ -161,26 +201,23 @@ public sealed class DesktopStreamer : IDisposable
                     catch { }
                 }
 
-                Bitmap frameToProcess;
+                Bitmap frameToProcess = bitmap;
+                Bitmap? scaled = null;
                 if (w != captureRect.Width || h != captureRect.Height)
                 {
-                    var scaled = new Bitmap(w, h, PixelFormat.Format32bppArgb);
+                    scaled = new Bitmap(w, h, PixelFormat.Format32bppArgb);
                     using (var g = Graphics.FromImage(scaled))
                     {
-                        g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
+                        g.InterpolationMode = effectiveQuality >= 90
+                            ? System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic
+                            : System.Drawing.Drawing2D.InterpolationMode.Bilinear;
                         g.DrawImage(bitmap, 0, 0, w, h);
                     }
-                    bitmap.Dispose();
                     frameToProcess = scaled;
-                }
-                else
-                {
-                    frameToProcess = bitmap;
                 }
 
                 Bitmap toEncode;
                 Bitmap? gray = null;
-
                 if (_grayscale)
                 {
                     gray = MakeGrayscale(frameToProcess);
@@ -193,31 +230,98 @@ public sealed class DesktopStreamer : IDisposable
 
                 var jpeg = CompressJpeg(toEncode, effectiveQuality);
                 gray?.Dispose();
-                frameToProcess.Dispose();
+                scaled?.Dispose();
 
-                var base64 = Convert.ToBase64String(jpeg);
-                var inv = System.Globalization.CultureInfo.InvariantCulture;
-                var packet = new Packet
+                lock (_cropGate)
                 {
-                    Command = "deskFrame",
-                    Image = base64,
-                    Text = $"{{\"w\":{w},\"h\":{h},\"cropX\":{sendCropX.ToString(inv)},\"cropY\":{sendCropY.ToString(inv)},\"cropW\":{sendCropW.ToString(inv)},\"cropH\":{sendCropH.ToString(inv)},\"q\":{effectiveQuality}}}",
-                };
-
-                if (_send != null)
+                    stale = _generation != generation && CropMoved(request, _crop);
+                }
+                if (!stale && _send != null)
+                {
+                    var inv = System.Globalization.CultureInfo.InvariantCulture;
+                    var sharp = request.Sharp ? 1 : 0;
+                    var packet = new Packet
+                    {
+                        Command = "deskFrame",
+                        Image = Convert.ToBase64String(jpeg),
+                        Text = $"{{\"w\":{w},\"h\":{h},\"cropX\":{sendCropX.ToString(inv)},\"cropY\":{sendCropY.ToString(inv)},\"cropW\":{sendCropW.ToString(inv)},\"cropH\":{sendCropH.ToString(inv)},\"sharp\":{sharp},\"q\":{effectiveQuality}}}",
+                    };
                     await _send(packet);
+                    sentSharpPreview = request.Sharp && effectiveQuality < 90;
+                }
             }
             catch (Exception)
             {
                 // Screen capture can fail transiently (e.g. UAC secure desktop or sleep)
             }
 
+            if (token.IsCancellationRequested) break;
             var elapsed = Environment.TickCount64 - start;
-            var targetDelay = 1000 / Math.Max(1, _fps);
-            var delay = Math.Max(5, (int)(targetDelay - elapsed));
-            try { await Task.Delay(delay, token); }
-            catch (OperationCanceledException) { break; }
+            int delay;
+            if (stale)
+            {
+                delay = 1;
+            }
+            else if (sentSharpPreview)
+            {
+                var remain = 140 - (int)(Environment.TickCount64 - request.ChangedAt);
+                delay = Math.Clamp(remain, 30, 140);
+            }
+            else
+            {
+                delay = Math.Max(5, (int)(1000 / fps - elapsed));
+            }
+            using var pace = CancellationTokenSource.CreateLinkedTokenSource(token);
+            lock (_cropGate) _wake = pace;
+            try { await Task.Delay(delay, pace.Token); }
+            catch (OperationCanceledException)
+            {
+                if (token.IsCancellationRequested) break;
+            }
+            finally
+            {
+                lock (_cropGate)
+                {
+                    if (ReferenceEquals(_wake, pace)) _wake = null;
+                }
+            }
         }
+    }
+
+    // A repeat of the rectangle already queued. The phone sends a new one only when the view leaves the halo.
+    private static bool CropNoticeablyDifferent(CropRequest older, CropRequest newer)
+    {
+        if (older.Sharp != newer.Sharp) return true;
+        if (!older.Sharp) return false;
+        if (Math.Abs(older.X - newer.X) > 0.004) return true;
+        if (Math.Abs(older.Y - newer.Y) > 0.004) return true;
+        if (Math.Abs(older.W - newer.W) > 0.004) return true;
+        if (Math.Abs(older.H - newer.H) > 0.004) return true;
+        return false;
+    }
+
+    // An in-flight frame is for a different place than the request waiting now, so the phone should not decode it.
+    private static bool CropMoved(CropRequest older, CropRequest newer)
+    {
+        if (older.Sharp != newer.Sharp) return true;
+        if (!older.Sharp) return false;
+        var dx = Math.Abs((older.X + older.W / 2) - (newer.X + newer.W / 2));
+        var dy = Math.Abs((older.Y + older.H / 2) - (newer.Y + newer.H / 2));
+        if (older.W > 0 && dx > older.W * 0.22) return true;
+        if (older.H > 0 && dy > older.H * 0.22) return true;
+        if (older.W > 0 && Math.Abs(older.W - newer.W) / older.W > 0.12) return true;
+        if (older.H > 0 && Math.Abs(older.H - newer.H) / older.H > 0.12) return true;
+        return false;
+    }
+
+    private struct CropRequest
+    {
+        public double X, Y, W, H;
+        public int MaxW, MaxH;
+        public long ChangedAt;
+        public bool Sharp;
+
+        public static CropRequest Normal() => new() { X = 0, Y = 0, W = 1, H = 1 };
     }
 
     private static Bitmap MakeGrayscale(Bitmap source)

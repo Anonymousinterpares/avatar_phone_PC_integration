@@ -264,7 +264,11 @@ public partial class App : System.Windows.Application
                         var cy = root.GetProperty("cropY").GetDouble();
                         var cw = root.GetProperty("cropW").GetDouble();
                         var ch = root.GetProperty("cropH").GetDouble();
-                        _streamer?.UpdateCrop(cx, cy, cw, ch);
+                        var maxW = 0;
+                        var maxH = 0;
+                        if (root.TryGetProperty("maxW", out var mw) && mw.TryGetInt32(out var mwi)) maxW = mwi;
+                        if (root.TryGetProperty("maxH", out var mh) && mh.TryGetInt32(out var mhi)) maxH = mhi;
+                        _streamer?.UpdateCrop(cx, cy, cw, ch, maxW, maxH);
                     }
                     catch { }
                     return null;

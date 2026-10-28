@@ -92,7 +92,14 @@ class MainActivity : ComponentActivity() {
         setImmersiveMode(true)
 
         link = DeskLink(
-            onPacket = { packet -> main.post { onPacket(packet) } },
+            onPacket = { packet ->
+                if (packet.optString("command") == "deskFrame") {
+                    val picture = decodeDeskFrame(packet)
+                    if (picture != null) main.post { applyDeskPicture(picture) }
+                } else {
+                    main.post { onPacket(packet) }
+                }
+            },
             onDropped = { main.post { onDropped() } },
         )
         live = LiveVoice(
@@ -169,7 +176,7 @@ class MainActivity : ComponentActivity() {
                         onSettingsChanged = { f, q, s, g -> sendDesktopSettings(f, q, s, g) },
                         onAudioSettingsChanged = { en, q, m -> sendDesktopAudioSettings(en, q, m) },
                         onTouch = { action, x, y, extra -> sendDesktopInput(action, x, y, extra) },
-                        onCropChanged = { cx, cy, cw, ch -> sendDesktopCrop(cx, cy, cw, ch) },
+                        onCropChanged = { cx, cy, cw, ch, maxW, maxH -> sendDesktopCrop(cx, cy, cw, ch, maxW, maxH) },
                         onKeyboard = { },
                         onBack = { stopDesktop() },
                         onToggleOrientation = { toggleOrientation() },
@@ -573,43 +580,7 @@ class MainActivity : ComponentActivity() {
                 )
                 armCaptionExpiry()
             }
-            "deskFrame" -> {
-                val imageData = packet.optString("image", "")
-                if (imageData.isNotEmpty()) {
-                    try {
-                        val bytes = android.util.Base64.decode(imageData, android.util.Base64.DEFAULT)
-                        val bitmap = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
-                        if (bitmap != null) {
-                            val textStr = packet.optString("text", "{}")
-                            var cropX = 0f
-                            var cropY = 0f
-                            var cropW = 1f
-                            var cropH = 1f
-                            try {
-                                val doc = JSONObject(textStr)
-                                cropX = doc.optDouble("cropX", 0.0).toFloat()
-                                cropY = doc.optDouble("cropY", 0.0).toFloat()
-                                cropW = doc.optDouble("cropW", 1.0).toFloat()
-                                cropH = doc.optDouble("cropH", 1.0).toFloat()
-                            } catch (_: Exception) { }
-
-                            if (cropW < 0.98f || cropH < 0.98f) {
-                                ui = ui.copy(
-                                    deskCropFrame = bitmap,
-                                    deskCropRect = androidx.compose.ui.geometry.Rect(
-                                        cropX,
-                                        cropY,
-                                        cropX + cropW,
-                                        cropY + cropH,
-                                    ),
-                                )
-                            } else {
-                                ui = ui.copy(deskFrame = bitmap, deskCropFrame = null, deskCropRect = null)
-                            }
-                        }
-                    } catch (_: Exception) { }
-                }
-            }
+            "deskFrame" -> applyDeskPicture(decodeDeskFrame(packet) ?: return)
             "deskHelpState" -> {
                 when (packet.optString("text")) {
                     "watch" -> ui = ui.copy(helpControl = false, helpAsking = false, status = "Watching. The computer has the mouse.")
@@ -939,7 +910,7 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun sendDesktopCrop(cropX: Float, cropY: Float, cropW: Float, cropH: Float) {
+    private fun sendDesktopCrop(cropX: Float, cropY: Float, cropW: Float, cropH: Float, maxW: Int, maxH: Int) {
         work.execute {
             try {
                 val crop = JSONObject()
@@ -947,8 +918,55 @@ class MainActivity : ComponentActivity() {
                 crop.put("cropY", cropY.toDouble())
                 crop.put("cropW", cropW.toDouble())
                 crop.put("cropH", cropH.toDouble())
+                if (maxW > 0 && maxH > 0) {
+                    crop.put("maxW", maxW)
+                    crop.put("maxH", maxH)
+                }
                 link.send("deskCrop", crop.toString())
             } catch (_: Exception) { }
+        }
+    }
+
+    private data class DeskPicture(
+        val bitmap: android.graphics.Bitmap,
+        val cropX: Float,
+        val cropY: Float,
+        val cropW: Float,
+        val cropH: Float,
+        val sharp: Boolean,
+    )
+
+    private fun decodeDeskFrame(packet: JSONObject): DeskPicture? {
+        val imageData = packet.optString("image", "")
+        if (imageData.isEmpty()) return null
+        return try {
+            val bytes = android.util.Base64.decode(imageData, android.util.Base64.DEFAULT)
+            val bitmap = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: return null
+            val doc = JSONObject(packet.optString("text", "{}"))
+            val cropX = doc.optDouble("cropX", 0.0).toFloat()
+            val cropY = doc.optDouble("cropY", 0.0).toFloat()
+            val cropW = doc.optDouble("cropW", 1.0).toFloat()
+            val cropH = doc.optDouble("cropH", 1.0).toFloat()
+            val sharp = if (doc.has("sharp")) doc.optInt("sharp", 0) == 1 else cropW < 0.98f || cropH < 0.98f
+            DeskPicture(bitmap, cropX, cropY, cropW, cropH, sharp)
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun applyDeskPicture(picture: DeskPicture) {
+        if (picture.sharp) {
+            ui = ui.copy(
+                deskCropFrame = picture.bitmap,
+                deskCropRect = androidx.compose.ui.geometry.Rect(
+                    picture.cropX,
+                    picture.cropY,
+                    picture.cropX + picture.cropW,
+                    picture.cropY + picture.cropH,
+                ),
+            )
+        } else {
+            ui = ui.copy(deskFrame = picture.bitmap, deskCropFrame = null, deskCropRect = null)
         }
     }
 
