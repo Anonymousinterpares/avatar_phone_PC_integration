@@ -38,12 +38,15 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
@@ -179,7 +182,10 @@ fun DesktopViewScreen(
     onTalkUp: () -> Unit = {},
 ) {
     var showSettings by remember { mutableStateOf(false) }
-    var hideControls by remember { mutableStateOf(false) }
+    var controlsOpen by remember { mutableStateOf(true) }
+    var panMode by remember { mutableStateOf(false) }
+    var barHeightPx by remember { mutableIntStateOf(0) }
+    var lastCornerAt by remember { mutableStateOf(0L) }
     var localFps by remember(fps) { mutableIntStateOf(fps) }
     var localQuality by remember(quality) { mutableIntStateOf(quality) }
     var localScale by remember(scale) { mutableFloatStateOf(scale) }
@@ -221,11 +227,197 @@ fun DesktopViewScreen(
     }
 
     var talking by remember { mutableStateOf(false) }
-    Column(
+    val zoomed = zoomScale > 1.05f
+    // Keyed on the boolean so a further pinch, while the bar is open, does not hide it again.
+    LaunchedEffect(zoomed) { controlsOpen = !zoomed }
+    val density = LocalDensity.current
+    val topInset = if (!zoomed && controlsOpen && barHeightPx > 0) {
+        with(density) { barHeightPx.toDp() }
+    } else {
+        0.dp
+    }
+
+    Box(
         modifier = Modifier
             .fillMaxSize()
             .background(Color.Black),
     ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(top = topInset)
+                .clipToBounds()
+                .onSizeChanged { canvasSize = it }
+                .pointerInput(Unit) {
+                    awaitEachGesture {
+                        val down = awaitFirstDown(requireUnconsumed = false)
+                        val startTime = System.currentTimeMillis()
+                        var isPinching = false
+                        var movedOneFinger = false
+                        var prevDistance = 0f
+                        var prevCentroid = Offset.Zero
+                        val touchSlop = 12f
+                        val canvasW0 = size.width.toFloat().coerceAtLeast(1f)
+                        val canvasH0 = size.height.toFloat().coerceAtLeast(1f)
+                        val corner = minOf(canvasW0, canvasH0) * 0.22f
+                        // A touch that starts here must not click or move the mouse. The second tap shows the bar.
+                        val revealZone = isRevealCorner(down.position, canvasW0, corner) &&
+                            zoomScale > 1.05f &&
+                            !controlsOpen
+
+                        while (true) {
+                            val event = awaitPointerEvent()
+                            val activePointers = event.changes.filter { it.pressed }
+                            if (activePointers.isEmpty()) break
+
+                            if (activePointers.size >= 2) {
+                                isPinching = true
+                                val p1 = activePointers[0].position
+                                val p2 = activePointers[1].position
+                                val distance = hypot(p1.x - p2.x, p1.y - p2.y)
+                                val centroid = Offset((p1.x + p2.x) / 2f, (p1.y + p2.y) / 2f)
+
+                                if (prevDistance > 0f) {
+                                    val factor = distance / prevDistance
+                                    val newZoom = (zoomScale * factor).coerceIn(1.0f, 5.0f)
+                                    val dPan = centroid - prevCentroid
+                                    val canvasW = size.width.toFloat().coerceAtLeast(1f)
+                                    val canvasH = size.height.toFloat().coerceAtLeast(1f)
+                                    val frameBmp = currentFrame
+                                    val imgW = frameBmp?.width?.toFloat() ?: canvasW
+                                    val imgH = frameBmp?.height?.toFloat() ?: canvasH
+                                    zoomScale = if (newZoom <= 1.05f) 1.0f else newZoom
+                                    panOffset = if (zoomScale <= 1.05f) {
+                                        Offset.Zero
+                                    } else {
+                                        clampedPan(panOffset + dPan, canvasW, canvasH, imgW, imgH, zoomScale)
+                                    }
+                                }
+                                prevDistance = distance
+                                prevCentroid = centroid
+                                activePointers.forEach { it.consume() }
+                            } else {
+                                prevDistance = 0f
+                                if (!isPinching && activePointers.size == 1) {
+                                    val pointer = activePointers[0]
+                                    val canvasW = size.width.toFloat().coerceAtLeast(1f)
+                                    val canvasH = size.height.toFloat().coerceAtLeast(1f)
+                                    val frameBmp = currentFrame
+                                    val imgW = frameBmp?.width?.toFloat() ?: canvasW
+                                    val imgH = frameBmp?.height?.toFloat() ?: canvasH
+                                    val dist = hypot(
+                                        pointer.position.x - down.position.x,
+                                        pointer.position.y - down.position.y,
+                                    )
+                                    if (panMode) {
+                                        if (dist > touchSlop || movedOneFinger) {
+                                            val delta = if (!movedOneFinger) {
+                                                pointer.position - down.position
+                                            } else {
+                                                pointer.position - pointer.previousPosition
+                                            }
+                                            movedOneFinger = true
+                                            panOffset = clampedPan(
+                                                panOffset + delta,
+                                                canvasW,
+                                                canvasH,
+                                                imgW,
+                                                imgH,
+                                                zoomScale,
+                                            )
+                                            if (zoomScale <= 1.05f) panOffset = Offset.Zero
+                                        }
+                                    } else if (!revealZone && (dist > touchSlop || movedOneFinger)) {
+                                        movedOneFinger = true
+                                        val (nx, ny) = canvasToPc(
+                                            pointer.position,
+                                            canvasW,
+                                            canvasH,
+                                            imgW,
+                                            imgH,
+                                            zoomScale,
+                                            panOffset,
+                                        )
+                                        currentOnTouch("move", nx, ny, emptyMap())
+                                    }
+                                    pointer.consume()
+                                }
+                            }
+                        }
+
+                        if (!isPinching && !movedOneFinger) {
+                            val now = System.currentTimeMillis()
+                            if (revealZone) {
+                                val second = isSecondTap(now, lastCornerAt)
+                                lastCornerAt = if (second) 0L else now
+                                if (second) controlsOpen = true
+                            } else if (!panMode) {
+                                val canvasW = size.width.toFloat().coerceAtLeast(1f)
+                                val canvasH = size.height.toFloat().coerceAtLeast(1f)
+                                val frameBmp = currentFrame
+                                val imgW = frameBmp?.width?.toFloat() ?: canvasW
+                                val imgH = frameBmp?.height?.toFloat() ?: canvasH
+                                val (nx, ny) = canvasToPc(
+                                    down.position,
+                                    canvasW,
+                                    canvasH,
+                                    imgW,
+                                    imgH,
+                                    zoomScale,
+                                    panOffset,
+                                )
+                                val duration = now - startTime
+                                if (duration > 400) {
+                                    currentOnTouch("click", nx, ny, mapOf("right" to true))
+                                } else {
+                                    currentOnTouch("click", nx, ny, emptyMap())
+                                }
+                            }
+                        }
+                    }
+                },
+        ) {
+            if (frame != null) {
+                DesktopPicture(frame, cropFrame, cropRect, zoomScale, panOffset)
+            } else {
+                Box(
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text("Waiting for first frame…", color = Color(0xFFB9B2CC), fontSize = 16.sp)
+                }
+            }
+        }
+
+        if (!controlsOpen && !zoomed) {
+            Button(
+                onClick = { controlsOpen = true },
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(8.dp),
+                shape = RoundedCornerShape(12.dp),
+            ) {
+                Text("⚙ Controls", fontSize = 11.sp)
+            }
+        }
+
+        // Absent from composition while hidden, so covered buttons cannot take taps.
+        if (controlsOpen) {
+            Column(
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .fillMaxWidth()
+                    .onSizeChanged { barHeightPx = it.height }
+                    .pointerInput(Unit) {
+                        // Keeps the bar's own area as the hit target, including gaps between buttons.
+                        awaitPointerEventScope {
+                            while (true) {
+                                val event = awaitPointerEvent(PointerEventPass.Final)
+                                event.changes.forEach { if (!it.isConsumed) it.consume() }
+                            }
+                        }
+                    },
+            ) {
         if (helpMode) {
             Column(
                 modifier = Modifier
@@ -273,7 +465,6 @@ fun DesktopViewScreen(
                 }
             }
         }
-        if (!hideControls) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -290,6 +481,13 @@ fun DesktopViewScreen(
                         zoomScale = if (next <= 1.05f) 1.0f else next
                         if (zoomScale <= 1.05f) panOffset = Offset.Zero
                     }) { Text("−", fontSize = 13.sp) }
+
+                    Button(
+                        onClick = { panMode = !panMode },
+                        colors = androidx.compose.material3.ButtonDefaults.buttonColors(
+                            containerColor = if (panMode) Color(0xFF4254D6) else Color(0xFF2A2A40),
+                        ),
+                    ) { Text("✋", fontSize = 13.sp) }
 
                     Button(onClick = {
                         zoomScale = (zoomScale * 1.3f).coerceIn(1.0f, 5.0f)
@@ -308,7 +506,7 @@ fun DesktopViewScreen(
                     Button(onClick = { onAudioSettingsChanged(!audioEnabled, audioQuality, mutePc) }) {
                         Text(if (audioEnabled) "🔊" else "🔇", fontSize = 13.sp)
                     }
-                    Button(onClick = { hideControls = true }) { Text("⛶", fontSize = 13.sp) }
+                    Button(onClick = { controlsOpen = false }) { Text("⛶", fontSize = 13.sp) }
                     Button(onClick = { showKeyboard = !showKeyboard }) { Text("⌨", fontSize = 13.sp) }
                     Button(onClick = { showSettings = !showSettings }) { Text("⚙", fontSize = 13.sp) }
                 }
@@ -498,173 +696,93 @@ fun DesktopViewScreen(
             }
         }
 
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .weight(1f)
-                .onSizeChanged { canvasSize = it }
-                .pointerInput(Unit) {
-                    awaitEachGesture {
-                        val down = awaitFirstDown(requireUnconsumed = false)
-                        val startTime = System.currentTimeMillis()
-                        var isPinching = false
-                        var movedOneFinger = false
-                        var prevDistance = 0f
-                        var prevCentroid = Offset.Zero
-                        val touchSlop = 12f
-
-                        while (true) {
-                            val event = awaitPointerEvent()
-                            val activePointers = event.changes.filter { it.pressed }
-                            if (activePointers.isEmpty()) break
-
-                            if (activePointers.size >= 2) {
-                                isPinching = true
-                                val p1 = activePointers[0].position
-                                val p2 = activePointers[1].position
-                                val distance = hypot(p1.x - p2.x, p1.y - p2.y)
-                                val centroid = Offset((p1.x + p2.x) / 2f, (p1.y + p2.y) / 2f)
-
-                                if (prevDistance > 0f) {
-                                    val factor = distance / prevDistance
-                                    val newZoom = (zoomScale * factor).coerceIn(1.0f, 5.0f)
-                                    val dPan = centroid - prevCentroid
-                                    val newPan = panOffset + dPan
-
-                                    val canvasW = size.width.toFloat().coerceAtLeast(1f)
-                                    val canvasH = size.height.toFloat().coerceAtLeast(1f)
-                                    val frameBmp = currentFrame
-                                    val imgW = frameBmp?.width?.toFloat() ?: canvasW
-                                    val imgH = frameBmp?.height?.toFloat() ?: canvasH
-                                    val fitScale = minOf(canvasW / imgW, canvasH / imgH)
-                                    val totalW = imgW * fitScale * newZoom
-                                    val totalH = imgH * fitScale * newZoom
-                                    val maxPanX = if (totalW > canvasW) (totalW - canvasW) / 2f else 0f
-                                    val maxPanY = if (totalH > canvasH) (totalH - canvasH) / 2f else 0f
-
-                                    zoomScale = if (newZoom <= 1.05f) 1.0f else newZoom
-                                    panOffset = if (zoomScale <= 1.05f) Offset.Zero else Offset(
-                                        newPan.x.coerceIn(-maxPanX, maxPanX),
-                                        newPan.y.coerceIn(-maxPanY, maxPanY),
-                                    )
-                                }
-                                prevDistance = distance
-                                prevCentroid = centroid
-                                activePointers.forEach { it.consume() }
-                            } else {
-                                prevDistance = 0f
-                                if (!isPinching && activePointers.size == 1) {
-                                    val pointer = activePointers[0]
-                                    val canvasW = size.width.toFloat().coerceAtLeast(1f)
-                                    val canvasH = size.height.toFloat().coerceAtLeast(1f)
-                                    val frameBmp = currentFrame
-                                    val imgW = frameBmp?.width?.toFloat() ?: canvasW
-                                    val imgH = frameBmp?.height?.toFloat() ?: canvasH
-
-                                    val dist = hypot(pointer.position.x - down.position.x, pointer.position.y - down.position.y)
-                                    if (dist > touchSlop || movedOneFinger) {
-                                        movedOneFinger = true
-                                        val (nx, ny) = canvasToPc(pointer.position, canvasW, canvasH, imgW, imgH, zoomScale, panOffset)
-                                        currentOnTouch("move", nx, ny, emptyMap())
-                                    }
-                                    pointer.consume()
-                                }
-                            }
-                        }
-
-                        if (!isPinching && !movedOneFinger) {
-                            val canvasW = size.width.toFloat().coerceAtLeast(1f)
-                            val canvasH = size.height.toFloat().coerceAtLeast(1f)
-                            val frameBmp = currentFrame
-                            val imgW = frameBmp?.width?.toFloat() ?: canvasW
-                            val imgH = frameBmp?.height?.toFloat() ?: canvasH
-                            val (nx, ny) = canvasToPc(down.position, canvasW, canvasH, imgW, imgH, zoomScale, panOffset)
-                            val duration = System.currentTimeMillis() - startTime
-                            if (duration > 400) {
-                                currentOnTouch("click", nx, ny, mapOf("right" to true))
-                            } else {
-                                currentOnTouch("click", nx, ny, emptyMap())
-                            }
-                        }
-                    }
-                },
-        ) {
-            if (frame != null) {
-                val imageBitmap = remember(frame) { frame.asImageBitmap() }
-                val cropImageBitmap = remember(cropFrame) { cropFrame?.asImageBitmap() }
-
-                Canvas(
-                    modifier = Modifier.fillMaxSize(),
-                ) {
-                    val canvasW = size.width
-                    val canvasH = size.height
-                    val imgW = imageBitmap.width.toFloat()
-                    val imgH = imageBitmap.height.toFloat()
-                    val fitScale = minOf(canvasW / imgW, canvasH / imgH)
-                    val baseW = imgW * fitScale
-                    val baseH = imgH * fitScale
-                    val totalW = baseW * zoomScale
-                    val totalH = baseH * zoomScale
-
-                    val maxPanX = if (totalW > canvasW) (totalW - canvasW) / 2f else 0f
-                    val maxPanY = if (totalH > canvasH) (totalH - canvasH) / 2f else 0f
-                    val curPanX = panOffset.x.coerceIn(-maxPanX, maxPanX)
-                    val curPanY = panOffset.y.coerceIn(-maxPanY, maxPanY)
-
-                    val drawLeft = (canvasW / 2f + curPanX) - totalW / 2f
-                    val drawTop = (canvasH / 2f + curPanY) - totalH / 2f
-
-                    // Draw base desktop frame
-                    drawImage(
-                        image = imageBitmap,
-                        srcOffset = IntOffset.Zero,
-                        srcSize = IntSize(imageBitmap.width, imageBitmap.height),
-                        dstOffset = IntOffset(drawLeft.roundToInt(), drawTop.roundToInt()),
-                        dstSize = IntSize(totalW.roundToInt().coerceAtLeast(1), totalH.roundToInt().coerceAtLeast(1)),
-                    )
-
-                    // Sharp capture of every original pixel currently inside the phone view.
-                    if (zoomScale > SharpViewZoom && cropImageBitmap != null && cropRect != null &&
-                        cropRect.width > 0.01f && cropRect.height > 0.01f &&
-                        (cropRect.width < 0.98f || cropRect.height < 0.98f)
-                    ) {
-                        val cropDstLeft = drawLeft + cropRect.left * totalW
-                        val cropDstTop = drawTop + cropRect.top * totalH
-                        val cropDstW = cropRect.width * totalW
-                        val cropDstH = cropRect.height * totalH
-
-                        drawImage(
-                            image = cropImageBitmap,
-                            srcOffset = IntOffset.Zero,
-                            srcSize = IntSize(cropImageBitmap.width, cropImageBitmap.height),
-                            dstOffset = IntOffset(cropDstLeft.roundToInt(), cropDstTop.roundToInt()),
-                            dstSize = IntSize(cropDstW.roundToInt().coerceAtLeast(1), cropDstH.roundToInt().coerceAtLeast(1)),
-                        )
-                    }
-                }
-            } else {
-                Box(
-                    modifier = Modifier.fillMaxSize(),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Text("Waiting for first frame…", color = Color(0xFFB9B2CC), fontSize = 16.sp)
-                }
-            }
-
-            if (hideControls) {
-                Button(
-                    onClick = { hideControls = false },
-                    modifier = Modifier
-                        .align(Alignment.TopEnd)
-                        .padding(8.dp),
-                    shape = RoundedCornerShape(12.dp),
-                ) {
-                    val label = if (zoomScale > 1.05f) "⚙ ${(zoomScale * 100).roundToInt()}%" else "⚙ Controls"
-                    Text(label, fontSize = 11.sp)
-                }
-            }
         }
     }
+}
+
+@Composable
+private fun DesktopPicture(
+    frame: Bitmap,
+    cropFrame: Bitmap?,
+    cropRect: Rect?,
+    zoomScale: Float,
+    panOffset: Offset,
+) {
+    val imageBitmap = remember(frame) { frame.asImageBitmap() }
+    val cropImageBitmap = remember(cropFrame) { cropFrame?.asImageBitmap() }
+    Canvas(modifier = Modifier.fillMaxSize()) {
+        val canvasW = size.width
+        val canvasH = size.height
+        val imgW = imageBitmap.width.toFloat()
+        val imgH = imageBitmap.height.toFloat()
+        val fitScale = minOf(canvasW / imgW, canvasH / imgH)
+        val baseW = imgW * fitScale
+        val baseH = imgH * fitScale
+        val totalW = baseW * zoomScale
+        val totalH = baseH * zoomScale
+
+        val maxPanX = if (totalW > canvasW) (totalW - canvasW) / 2f else 0f
+        val maxPanY = if (totalH > canvasH) (totalH - canvasH) / 2f else 0f
+        val curPanX = panOffset.x.coerceIn(-maxPanX, maxPanX)
+        val curPanY = panOffset.y.coerceIn(-maxPanY, maxPanY)
+
+        val drawLeft = (canvasW / 2f + curPanX) - totalW / 2f
+        val drawTop = (canvasH / 2f + curPanY) - totalH / 2f
+
+        drawImage(
+            image = imageBitmap,
+            srcOffset = IntOffset.Zero,
+            srcSize = IntSize(imageBitmap.width, imageBitmap.height),
+            dstOffset = IntOffset(drawLeft.roundToInt(), drawTop.roundToInt()),
+            dstSize = IntSize(totalW.roundToInt().coerceAtLeast(1), totalH.roundToInt().coerceAtLeast(1)),
+        )
+
+        if (zoomScale > SharpViewZoom && cropImageBitmap != null && cropRect != null &&
+            cropRect.width > 0.01f && cropRect.height > 0.01f &&
+            (cropRect.width < 0.98f || cropRect.height < 0.98f)
+        ) {
+            val cropDstLeft = drawLeft + cropRect.left * totalW
+            val cropDstTop = drawTop + cropRect.top * totalH
+            val cropDstW = cropRect.width * totalW
+            val cropDstH = cropRect.height * totalH
+            drawImage(
+                image = cropImageBitmap,
+                srcOffset = IntOffset.Zero,
+                srcSize = IntSize(cropImageBitmap.width, cropImageBitmap.height),
+                dstOffset = IntOffset(cropDstLeft.roundToInt(), cropDstTop.roundToInt()),
+                dstSize = IntSize(cropDstW.roundToInt().coerceAtLeast(1), cropDstH.roundToInt().coerceAtLeast(1)),
+            )
+        }
+    }
+}
+
+private fun clampedPan(
+    pan: Offset,
+    canvasW: Float,
+    canvasH: Float,
+    imgW: Float,
+    imgH: Float,
+    zoom: Float,
+): Offset {
+    if (imgW <= 0f || imgH <= 0f || canvasW <= 0f || canvasH <= 0f) return Offset.Zero
+    val fitScale = minOf(canvasW / imgW, canvasH / imgH)
+    val totalW = imgW * fitScale * zoom
+    val totalH = imgH * fitScale * zoom
+    val maxPanX = if (totalW > canvasW) (totalW - canvasW) / 2f else 0f
+    val maxPanY = if (totalH > canvasH) (totalH - canvasH) / 2f else 0f
+    return Offset(
+        pan.x.coerceIn(-maxPanX, maxPanX),
+        pan.y.coerceIn(-maxPanY, maxPanY),
+    )
+}
+
+private fun isRevealCorner(pos: Offset, width: Float, cornerPx: Float): Boolean {
+    return pos.x >= width - cornerPx && pos.y >= 0f && pos.y <= cornerPx
+}
+
+private fun isSecondTap(now: Long, lastAt: Long): Boolean {
+    val gap = now - lastAt
+    return gap in 40L..400L
 }
 
 private const val SharpViewZoom = 1.2f
