@@ -8,6 +8,7 @@ using System.Text;
 using System.Windows.Forms;
 using Bluey.Auth;
 using Bluey.Brains;
+using Bluey.Memory;
 using Bluey.Protocol;
 using Bluey.Session;
 using Bluey.Speech;
@@ -25,17 +26,21 @@ public sealed class TrayApp : IDisposable
     private readonly UsageHintsWindow _hints;
     private readonly SpeechConfigStore _speech;
     private readonly SupertonicSpeaker _speaker;
+    private readonly MemoryStore _memory;
     private readonly NotifyIcon _icon;
     private readonly Icon _iconImage;
     private readonly ToolStripMenuItem _modeItem;
     private ToolStripMenuItem _noTouchItem = null!;
+    private ToolStripMenuItem _learnItem = null!;
+    private ToolStripMenuItem _quietItem = null!;
+    private ToolStripMenuItem _tellItem = null!;
 
     private readonly Action _allowHelp;
     private readonly Action _helpSomeone;
     private ToolStripMenuItem? _hiddenItem;
     private BerryTalkWindow? _talkWindow;
 
-    public TrayApp(AppSettings settings, SettingsStore store, BrainClient brains, CharacterSession session, PhoneLink phones, CursorOverlay overlay, UsageHintsWindow hints, SpeechConfigStore speech, SupertonicSpeaker speaker, Action allowHelp, Action helpSomeone)
+    public TrayApp(AppSettings settings, SettingsStore store, BrainClient brains, CharacterSession session, PhoneLink phones, CursorOverlay overlay, UsageHintsWindow hints, SpeechConfigStore speech, SupertonicSpeaker speaker, MemoryStore memory, Action allowHelp, Action helpSomeone)
     {
         _settings = settings;
         _store = store;
@@ -46,6 +51,7 @@ public sealed class TrayApp : IDisposable
         _hints = hints;
         _speech = speech;
         _speaker = speaker;
+        _memory = memory;
         _allowHelp = allowHelp;
         _helpSomeone = helpSomeone;
         _modeItem = new ToolStripMenuItem("Mode") { Enabled = false };
@@ -72,11 +78,19 @@ public sealed class TrayApp : IDisposable
         };
         _overlay.TalkRequested += ShowBerryTalk;
         _overlay.SetNoTouch(_settings.NoTouch);
+        _overlay.SetLearn(_settings.Learn);
         _overlay.NoTouchToggleRequested += () =>
         {
             _settings.NoTouch = !_settings.NoTouch;
             _store.Save(_settings);
             ShowNoTouch(_settings.NoTouch);
+            _ = _phones.BroadcastAsync(Packet.Of("session", _session.SessionJson()));
+        };
+        _overlay.LearnToggleRequested += () =>
+        {
+            _settings.Learn = !_settings.Learn;
+            _store.Save(_settings);
+            ShowLearn(_settings.Learn, _settings.LearnTell, _settings.LearnQuiet);
             _ = _phones.BroadcastAsync(Packet.Of("session", _session.SessionJson()));
         };
     }
@@ -166,6 +180,35 @@ public sealed class TrayApp : IDisposable
         };
         menu.Items.Add(control);
         menu.Items.Add(_noTouchItem);
+        _learnItem = new ToolStripMenuItem("Learn about me") { Checked = _settings.Learn, CheckOnClick = true };
+        _learnItem.CheckedChanged += (_, _) =>
+        {
+            if (_learnItem.Checked == _settings.Learn) return;
+            _settings.Learn = _learnItem.Checked;
+            _store.Save(_settings);
+            ShowLearn(_settings.Learn, _settings.LearnTell, _settings.LearnQuiet);
+            _ = _phones.BroadcastAsync(Packet.Of("session", _session.SessionJson()));
+        };
+        _quietItem = new ToolStripMenuItem("Quiet for now") { Checked = _settings.LearnQuiet, CheckOnClick = true, Enabled = _settings.Learn };
+        _quietItem.CheckedChanged += (_, _) =>
+        {
+            if (_quietItem.Checked == _settings.LearnQuiet) return;
+            _settings.LearnQuiet = _quietItem.Checked;
+            _store.Save(_settings);
+            _ = _phones.BroadcastAsync(Packet.Of("session", _session.SessionJson()));
+        };
+        _tellItem = new ToolStripMenuItem("Also tell the answer service") { Checked = _settings.LearnTell, CheckOnClick = true, Enabled = _settings.Learn };
+        _tellItem.CheckedChanged += (_, _) =>
+        {
+            if (_tellItem.Checked == _settings.LearnTell) return;
+            _settings.LearnTell = _tellItem.Checked;
+            _store.Save(_settings);
+            _ = _phones.BroadcastAsync(Packet.Of("session", _session.SessionJson()));
+        };
+        menu.Items.Add(_learnItem);
+        menu.Items.Add(_quietItem);
+        menu.Items.Add(_tellItem);
+        menu.Items.Add("What he remembers…", null, (_, _) => ShowMemory());
         var hints = new ToolStripMenuItem("Show usage hints") { Checked = _settings.UsageHints, CheckOnClick = true };
         hints.CheckedChanged += (_, _) =>
         {
@@ -285,6 +328,27 @@ public sealed class TrayApp : IDisposable
         _overlay.SetNoTouch(enabled);
         if (_noTouchItem.Checked == enabled) return;
         _noTouchItem.Checked = enabled;
+    }
+
+    public void ShowLearn(bool learn, bool tell, bool quiet)
+    {
+        _overlay.SetLearn(learn);
+        _quietItem.Enabled = learn;
+        _tellItem.Enabled = learn;
+        if (_learnItem.Checked != learn) _learnItem.Checked = learn;
+        if (_quietItem.Checked != quiet) _quietItem.Checked = quiet;
+        if (_tellItem.Checked != tell) _tellItem.Checked = tell;
+    }
+
+    private void ShowMemory()
+    {
+        using var window = new MemoryWindow(_memory);
+        window.Changed += note =>
+        {
+            var json = _memory.Snapshot(_settings.Learn, _settings.LearnTell, _settings.LearnQuiet, note);
+            _ = _phones.BroadcastAsync(Packet.Of("memory", json));
+        };
+        window.ShowDialog();
     }
 
     private void ShowAvatar()

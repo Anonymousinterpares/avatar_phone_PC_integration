@@ -100,6 +100,11 @@ data class Ui(
     val helpControl: Boolean = false,
     val helpAsking: Boolean = false,
     val noTouch: Boolean = false,
+    val learn: Boolean = false,
+    val learnTell: Boolean = false,
+    val learnQuiet: Boolean = false,
+    val memoryOpen: Boolean = false,
+    val memoryBody: String = "",
 )
 
 private val Berry1 = Color(0xFFA9BCFF)
@@ -126,6 +131,10 @@ fun BlueyScreen(
     onTestTts: () -> Unit = {},
     onToggleTts: () -> Unit = {},
     onNoTouch: (Boolean) -> Unit = {},
+    onLearn: (Boolean) -> Unit = {},
+    onLearnQuiet: (Boolean) -> Unit = {},
+    onLearnTell: (Boolean) -> Unit = {},
+    onMemoryOpen: () -> Unit = {},
 ) {
     var typingOpen by remember { mutableStateOf(false) }
     var soundSettingsOpen by remember { mutableStateOf(false) }
@@ -208,6 +217,62 @@ fun BlueyScreen(
                     )
                 }
                 Switch(checked = ui.noTouch, onCheckedChange = onNoTouch)
+            }
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(Color(0xFF1E1B2E), RoundedCornerShape(12.dp))
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
+                    Text("Learn about me", color = Color.White, fontSize = 15.sp)
+                    Text(
+                        "Off until you turn it on. Habits stay on this PC.",
+                        color = Color(0xFFB9B2CC),
+                        fontSize = 12.sp,
+                    )
+                }
+                Switch(checked = ui.learn, onCheckedChange = onLearn)
+            }
+            if (ui.learn) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(Color(0xFF1E1B2E), RoundedCornerShape(12.dp))
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
+                        Text("Quiet for now", color = Color.White, fontSize = 15.sp)
+                        Text(
+                            "Pause learning and use. The list stays.",
+                            color = Color(0xFFB9B2CC),
+                            fontSize = 12.sp,
+                        )
+                    }
+                    Switch(checked = ui.learnQuiet, onCheckedChange = onLearnQuiet)
+                }
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(Color(0xFF1E1B2E), RoundedCornerShape(12.dp))
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
+                        Text("Also tell the answer service", color = Color.White, fontSize = 15.sp)
+                        Text(
+                            "A matching note can go with a question. Live voice gets a short list for that call.",
+                            color = Color(0xFFB9B2CC),
+                            fontSize = 12.sp,
+                        )
+                    }
+                    Switch(checked = ui.learnTell, onCheckedChange = onLearnTell)
+                }
+            }
+            Button(onClick = onMemoryOpen, modifier = Modifier.fillMaxWidth()) {
+                Text("What he remembers")
             }
         }
         if (ui.awake) {

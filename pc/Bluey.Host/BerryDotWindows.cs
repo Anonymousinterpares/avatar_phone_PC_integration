@@ -13,8 +13,9 @@ public sealed class BerryDotMenu : Window
     public event Action? TalkChosen;
     public event Action? SleepChosen;
     public event Action? NoTouchChosen;
+    public event Action? LearnChosen;
 
-    public BerryDotMenu(bool noTouch)
+    public BerryDotMenu(bool noTouch, bool learn)
     {
         WindowStyle = WindowStyle.None;
         AllowsTransparency = true;
@@ -28,6 +29,7 @@ public sealed class BerryDotMenu : Window
         stack.Children.Add(Item("Talk", () => { _chose = true; TalkChosen?.Invoke(); Close(); }));
         stack.Children.Add(Item("Go to sleep", () => { _chose = true; SleepChosen?.Invoke(); Close(); }));
         stack.Children.Add(Item(noTouch ? "No touch: on" : "No touch: off", () => { _chose = true; NoTouchChosen?.Invoke(); Close(); }));
+        stack.Children.Add(Item(learn ? "Learn: on" : "Learn: off", () => { _chose = true; LearnChosen?.Invoke(); Close(); }));
         Content = new WpfControls.Border
         {
             Background = new Media.SolidColorBrush(Media.Color.FromRgb(28, 32, 52)),

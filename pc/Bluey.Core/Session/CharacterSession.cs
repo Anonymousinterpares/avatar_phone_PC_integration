@@ -2,6 +2,7 @@ using System.Text.Json;
 using Bluey.Auth;
 using Bluey.Brains;
 using Bluey.Desk;
+using Bluey.Memory;
 using Bluey.Protocol;
 using Bluey.Speech;
 
@@ -72,6 +73,8 @@ public sealed class CharacterSession
     private readonly BrainClient _brains;
     private readonly IDesk _desk;
     private readonly IReplySpeaker? _speaker;
+    private readonly MemoryStore _memory;
+    private readonly MemoryMoment _moment = new();
     private readonly List<HistoryTurn> _history = new();
     private ScreenCapture? _shot;
     private readonly object _gate = new();
@@ -88,12 +91,15 @@ public sealed class CharacterSession
         public string? Spoken;
     }
 
-    public CharacterSession(BrainClient brains, IDesk desk, IReplySpeaker? speaker = null)
+    public CharacterSession(BrainClient brains, IDesk desk, IReplySpeaker? speaker = null, MemoryStore? memory = null)
     {
         _brains = brains;
         _desk = desk;
         _speaker = speaker;
+        _memory = memory ?? new MemoryStore();
     }
+
+    public Func<bool>? AllowLearning { get; set; }
 
     public bool Awake { get; private set; }
     public DateTimeOffset StoppedUntil { get; private set; }
@@ -151,6 +157,9 @@ public sealed class CharacterSession
             route = settings.Mode == BrainMode.OpenRouter ? OpenRouterModels.RouteLabel(settings.OpenRouterModel, settings.OpenRouterProvider) : "",
             computerControl = settings.ComputerControl,
             noTouch = settings.NoTouch,
+            learn = settings.Learn,
+            learnTell = settings.LearnTell,
+            learnQuiet = settings.LearnQuiet,
         });
     }
 
@@ -256,7 +265,25 @@ public sealed class CharacterSession
             await ShowAsync(push, "Pick a login in the tray first. " + DescribeMode(), done: true);
             return;
         }
+        string? memoryNote = null;
+        if (LearningOn(settings))
+        {
+            var book = _memory.Load();
+            if (!_memory.TooNew && !_memory.Unreadable)
+            {
+                var decision = UserMemory.Decide(book, _moment, userText, settings.ComputerControl, settings.NoTouch, DateTimeOffset.UtcNow);
+                if (decision.BackupFirst) _memory.Backup();
+                if (decision.Changed) _memory.Save(book);
+                if (decision.Handled)
+                {
+                    await FinishLearnedAsync(push, userText, decision, cancellationToken);
+                    return;
+                }
+                if (settings.LearnTell) memoryNote = UserMemory.Brief(book, userText);
+            }
+        }
         var prior = new List<CompletedTool>();
+        var learned = new List<(string Name, string Args)>();
         byte[]? jpeg = null;
         string? screen = null;
         string? seenApp = null;
@@ -289,6 +316,7 @@ public sealed class CharacterSession
                     ComputerControl = settings.ComputerControl,
                     NoTouch = settings.NoTouch,
                     SpeakAloud = _speaker?.Enabled == true,
+                    MemoryNote = memoryNote,
                 }, cancellationToken);
                 if (!string.IsNullOrWhiteSpace(reply.Text))
                 {
@@ -310,6 +338,8 @@ public sealed class CharacterSession
                         }
                     }
                     if (run.Jpeg != null) looked = true;
+                    if (run.Ok && call.Name is "open_app" or "open_url")
+                        learned.Add((call.Name, call.ArgumentsJson));
                     prior.Add(new CompletedTool(call.CallId, call.Name, call.ArgumentsJson, run.Text));
                     if (run.Jpeg != null)
                     {
@@ -338,6 +368,14 @@ public sealed class CharacterSession
         finally
         {
             Busy(false);
+        }
+        if (LearningOn(settings) && learned.Count > 0 && !_memory.TooNew && !_memory.Unreadable)
+        {
+            var book = _memory.Load();
+            var changed = false;
+            foreach (var item in learned)
+                if (UserMemory.Observe(book, userText, item.Name, item.Args)) changed = true;
+            if (changed) _memory.Save(book);
         }
         var stopped = DateTimeOffset.UtcNow < StoppedUntil;
         var blocked = settings.NoTouch && (TaskOutcome.WantsComputerWork(userText) || (acted && failed));
@@ -375,6 +413,32 @@ public sealed class CharacterSession
                 for (var i = 0; i < _history.Count; i++)
                     _history[i] = LookMemory.Release(_history[i], note: true);
             }
+            if (_history.Count > 16) _history.RemoveRange(0, _history.Count - 16);
+        }
+    }
+
+    private bool LearningOn(AppSettings settings)
+    {
+        if (!settings.Learn || settings.LearnQuiet) return false;
+        if (AllowLearning != null && !AllowLearning()) return false;
+        return true;
+    }
+
+    private async Task FinishLearnedAsync(Func<Packet, Task> push, string userText, GuideResult decision, CancellationToken cancellationToken)
+    {
+        if (decision.Tool != null)
+        {
+            Busy(true);
+            try { await RunToolAsync(decision.Tool, decision.Args ?? "{}", cancellationToken); }
+            finally { Busy(false); }
+        }
+        await ShowAsync(push, decision.Say, done: true);
+        if (decision.Sad) PoseRequested?.Invoke("sad");
+        else if (decision.Tool != null) PoseRequested?.Invoke(TaskOutcome.Pose(false, _win++));
+        lock (_gate)
+        {
+            _history.Add(new HistoryTurn("user", userText));
+            _history.Add(new HistoryTurn("assistant", decision.Say));
             if (_history.Count > 16) _history.RemoveRange(0, _history.Count - 16);
         }
     }

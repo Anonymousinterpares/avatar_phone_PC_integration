@@ -190,6 +190,13 @@ class MainActivity : ComponentActivity() {
                         onTalkUp = { talkUp() },
                     )
                 }
+            } else if (ui.memoryOpen) {
+                androidx.activity.compose.BackHandler { ui = ui.copy(memoryOpen = false) }
+                MemoryScreen(
+                    body = ui.memoryBody,
+                    onClose = { ui = ui.copy(memoryOpen = false) },
+                    onAction = { action -> sendMemoryAction(action) },
+                )
             } else {
                 BlueyScreen(
                     ui = ui,
@@ -209,6 +216,10 @@ class MainActivity : ComponentActivity() {
                     onTestTts = { testTts() },
                     onToggleTts = { toggleTts() },
                     onNoTouch = { setNoTouch(it) },
+                    onLearn = { setLearn(it, ui.learnTell, ui.learnQuiet) },
+                    onLearnQuiet = { setLearn(ui.learn, ui.learnTell, it) },
+                    onLearnTell = { setLearn(ui.learn, it, ui.learnQuiet) },
+                    onMemoryOpen = { openMemory() },
                 )
             }
         }
@@ -536,7 +547,12 @@ class MainActivity : ComponentActivity() {
         realtime = session.optBoolean("realtime")
         provider = session.optString("provider", "")
         route = session.optString("route", "")
-        ui = ui.copy(noTouch = session.optBoolean("noTouch"))
+        ui = ui.copy(
+            noTouch = session.optBoolean("noTouch"),
+            learn = session.optBoolean("learn"),
+            learnTell = session.optBoolean("learnTell"),
+            learnQuiet = session.optBoolean("learnQuiet"),
+        )
         if (!ui.awake) return
         if (realtime) startMic() else stopMic()
         ui = ui.copy(status = statusLine())
@@ -568,6 +584,7 @@ class MainActivity : ComponentActivity() {
                 armCaptionExpiry()
             }
             "session" -> applySession(JSONObject(packet.optString("text", "{}")))
+            "memory" -> ui = ui.copy(memoryBody = packet.optString("text"))
             "caption" -> {
                 captionGeneration++
                 ui = ui.copy(caption = packet.optString("text"), talking = true, mood = "talking")
@@ -900,6 +917,74 @@ class MainActivity : ComponentActivity() {
         if (!link.connected) return
         work.execute {
             try { link.send("noTouch", if (enabled) "true" else "false") } catch (_: Exception) { }
+        }
+    }
+
+    private fun setLearn(learn: Boolean, tell: Boolean, quiet: Boolean) {
+        ui = ui.copy(learn = learn, learnTell = tell, learnQuiet = quiet)
+        if (!link.connected) return
+        work.execute {
+            try {
+                val flags = JSONObject()
+                flags.put("learn", learn)
+                flags.put("tell", tell)
+                flags.put("quiet", quiet)
+                link.send("memoryFlags", flags.toString())
+            } catch (_: Exception) { }
+        }
+    }
+
+    private fun openMemory() {
+        ui = ui.copy(memoryOpen = true, memoryBody = "")
+        if (!link.connected) {
+            ui = ui.copy(memoryBody = "{\"error\":\"Connect to the PC first.\"}")
+            return
+        }
+        work.execute {
+            try {
+                val reply = link.request("memoryGet", timeoutMs = 10_000)
+                val text = reply.optString("text")
+                main.post { ui = ui.copy(memoryBody = text, memoryOpen = true) }
+            } catch (ex: Exception) {
+                main.post { ui = ui.copy(memoryBody = "{\"error\":${JSONObject.quote(ex.message ?: "Could not load the list.")}}") }
+            }
+        }
+    }
+
+    private fun sendMemoryAction(action: String) {
+        if (!link.connected) return
+        val parts = action.split('|')
+        work.execute {
+            try {
+                val payload = JSONObject()
+                val command = when (parts.firstOrNull()) {
+                    "use" -> {
+                        payload.put("id", parts.getOrNull(1))
+                        payload.put("use", parts.getOrNull(2))
+                        "memoryUse"
+                    }
+                    "forget" -> {
+                        payload.put("id", parts.getOrNull(1))
+                        "memoryForget"
+                    }
+                    "forgetAll" -> {
+                        payload.put("all", true)
+                        "memoryForget"
+                    }
+                    "backup" -> "memoryBackup"
+                    "restore" -> {
+                        payload.put("name", parts.getOrNull(1))
+                        payload.put("add", parts.getOrNull(2) == "add")
+                        "memoryRestore"
+                    }
+                    else -> return@execute
+                }
+                val reply = link.request(command, text = payload.toString(), timeoutMs = 10_000)
+                val text = reply.optString("text")
+                main.post { ui = ui.copy(memoryBody = text) }
+            } catch (ex: Exception) {
+                main.post { ui = ui.copy(memoryBody = "{\"error\":${JSONObject.quote(ex.message ?: "That did not work.")}}") }
+            }
         }
     }
 

@@ -107,6 +107,10 @@ With it on, you can ask him to open an app or a site, click, type, press a short
 
 **No touch**, on the tray, on the phone, or on a right-click of the blueberry, is for when you are away from the computer and only want to hear what is on the screen. While it is on, the prompt does not include computer commands at all. He can look and point at what he describes. He will not move the Windows mouse, click, type, scroll, or open anything. If you ask him to do one of those anyway, he says no-touch mode is on and he cannot do that task, and he looks sad. With speech off, a reply stays on screen for at least four seconds before the next one replaces it. With speech on, the next reply waits until that line has finished playing. A long reply scrolls inside the bubble once, following the sound as it actually plays, and stays at the bottom when that line ends. Pauses on commas and periods hold the text, and if the sound waits, the text waits with it. With speech off, it scrolls once during the four seconds and then stays. If speech stalls, the reason is appended to `%AppData%\Bluey\tts.log`. The switches stay in step, and the choice is remembered on this PC. Turn it off when you want him to use the computer again. **Let him use the computer** still has to be on for that. The reply sits beside him, not on top of him.
 
+**Learn about me**, on the tray, on a right-click of the blueberry, and on the phone, is off until you turn it on. While it is on, Bluey keeps a short list on this PC of habits and preferences. "Remember that play music means Spotify", or the same request opening Spotify three times, makes that the normal action the next time. He says so once. One correction turns that habit off. Say "what do you remember", "forget that", "forget everything", or "don't remember my health". Passwords, codes, and payment numbers are never stored. The list is not learned from the screen or from a helper.
+
+**Quiet for now** pauses learning and use without deleting the list. **Also tell the answer service** is a second switch. Off, the habit runs on this PC and the answer service is not given the list. On, a matching note can go with a typed or transcribed question. A live voice call, which starts before the sentence, gets a short list for that call only. **What he remembers…** shows each line, lets you set it to just do it, ask first, or off, and can forget it. **Save a copy…** and **Load a copy…** use a normal file you can move. Bluey also keeps recent backups in `%AppData%\Bluey\memory\backups`, including one before **Forget everything**. The do-not-remember list stays when the rest is forgotten. A habit still does nothing while **No touch** is on, or while **Let him use the computer** is off.
+
 Asking about a fact that may have changed, such as the weather or the next public holiday, uses web search in the background. It does not open a browser. **Web search** in **Sign in and keys…** starts on the same provider as **Mode**. Change it and click **Save** to keep another provider. That choice is stored in `%AppData%\Bluey\web-search.json` and loaded again next time. OpenRouter searches with its own web tool and the OpenRouter key. Grok, OpenAI, and a ChatGPT plan sign-in use their own search. Claude and Cerebras do not search.
 
 ## Spoken replies
@@ -140,11 +144,15 @@ Right-click the tray icon for the rest:
 | **Continue with ChatGPT** | Browser sign-in for the ChatGPT plan. |
 | **Let him use the computer** | Allows clicks, typing, and the other computer actions. |
 | **No touch** | He only describes what is on the screen. The same switch is on the phone. |
+| **Learn about me** | Off until you turn it on. He keeps habits and likes on this PC. The same switch is on the phone and on a right-click of the blueberry. |
+| **Quiet for now** | Pauses learning and use. The list stays. |
+| **Also tell the answer service** | Matching notes can be sent with a question. Leave it off and the list stays on this PC. |
+| **What he remembers…** | Read, change, forget, save, or load the list. |
 | **Show usage hints** | Opens a short panel of the same talk and pointing examples. |
 | **Speak replies** and **Voice sex** | Reads one marked line aloud. |
 | **Avatar…** | Size (large is the biggest), walk speed at 100%, 150%, or 200%, walk or teleport, which corner he sleeps in, and whether a reply sits in the caption bar or a comic-book cloud. |
 | **Send him home** | Parks the blueberry at the bottom of the screen. |
-| **Hide the blueberry** | Takes him off the screen without quitting. The same Hide is on a right-click of the dot, along with Talk, Go to sleep, and No touch. Left-drag moves him. Talk opens a box. Type and press Enter. Double-click the box to close it. |
+| **Hide the blueberry** | Takes him off the screen without quitting. The same Hide is on a right-click of the dot, along with Talk, Go to sleep, No touch, and Learn. Left-drag moves him. Talk opens a box. Type and press Enter. Double-click the box to close it. |
 | **Phone on the left / center / right** | Where his eyes rest. |
 | **Allow help…** | Lets another phone, or another computer running Bluey, watch, talk, and ask for the mouse. |
 | **Help another computer…** | Opens a window that connects to someone else's Bluey. No phone is required. |

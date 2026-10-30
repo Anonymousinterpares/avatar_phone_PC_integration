@@ -5,6 +5,7 @@ using System.Windows.Threading;
 using Bluey.Auth;
 using Bluey.Brains;
 using Bluey.Desk;
+using Bluey.Memory;
 using Bluey.Protocol;
 using Bluey.Session;
 using Bluey.Speech;
@@ -17,6 +18,7 @@ public partial class App : System.Windows.Application
     private TrayApp? _tray;
     private CursorOverlay? _overlay;
     private CharacterSession? _session;
+    private MemoryStore? _memory;
     private SupertonicSpeaker? _speaker;
     private DesktopStreamer? _streamer;
     private AudioStreamer? _audioStreamer;
@@ -42,7 +44,18 @@ public partial class App : System.Windows.Application
         _overlay.Show();
         var desk = new WindowsDesk(() => store.Load().ComputerControl, visible => _overlay.SetVisible(visible));
         _speaker = new SupertonicSpeaker(speech);
-        _session = new CharacterSession(brains, desk, _speaker);
+        _memory = new MemoryStore();
+        _session = new CharacterSession(brains, desk, _speaker, _memory);
+        _session.AllowLearning = () => !_help.IsHelper(PhoneLink.CurrentClientId);
+        brains.LiveMemoryNote = () =>
+        {
+            var current = store.Load();
+            if (!current.Learn || !current.LearnTell || current.LearnQuiet) return null;
+            if (_help.IsHelper(PhoneLink.CurrentClientId)) return null;
+            var book = _memory.Load();
+            if (_memory.TooNew || _memory.Unreadable) return null;
+            return UserMemory.SessionBrief(book);
+        };
         _overlay.BindSpeechClock(() => _speaker.HeardSeconds());
         _speaker.PaceReady += marks => _overlay.FollowSpeech(marks);
         _session.CaptionChanged += (text, voiced) =>
@@ -381,6 +394,13 @@ public partial class App : System.Windows.Application
                     _ = _phones!.BroadcastAsync(Packet.Of("session", json));
                     return Packet.Of("session", json, packet.CallId);
                 }
+                case "memoryGet":
+                case "memoryFlags":
+                case "memoryUse":
+                case "memoryForget":
+                case "memoryBackup":
+                case "memoryRestore":
+                    return MemoryCommand(packet, settings, store);
                 case "ttsSet":
                     if (packet.Text == "true" || packet.Text == "1") speech.Current.TextToSpeech = true;
                     else if (packet.Text == "false" || packet.Text == "0") speech.Current.TextToSpeech = false;
@@ -408,7 +428,7 @@ public partial class App : System.Windows.Application
         var hints = new UsageHintsWindow();
         hints.Show();
         hints.SetEnabled(settings.UsageHints);
-        _tray = new TrayApp(settings, store, brains, _session, _phones, _overlay, hints, speech, _speaker, ShowHelpCode, ShowRemoteHelp);
+        _tray = new TrayApp(settings, store, brains, _session, _phones, _overlay, hints, speech, _speaker, _memory, ShowHelpCode, ShowRemoteHelp);
         var helpSweep = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
         helpSweep.Tick += (_, _) => SweepHelpControl();
         helpSweep.Start();
@@ -432,6 +452,65 @@ public partial class App : System.Windows.Application
         _speaker?.Dispose();
         _tray?.Dispose();
         base.OnExit(e);
+    }
+
+    private Packet MemoryCommand(Packet packet, AppSettings settings, SettingsStore store)
+    {
+        if (_memory == null || _session == null) return Packet.Of("memory", "{\"error\":\"no\"}", packet.CallId);
+        if (_help.IsHelper(PhoneLink.CurrentClientId)) return Packet.Of("memory", "{\"error\":\"no\"}", packet.CallId);
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(string.IsNullOrWhiteSpace(packet.Text) ? "{}" : packet.Text);
+            var root = doc.RootElement;
+            string? note = null;
+            switch (packet.Command)
+            {
+                case "memoryFlags":
+                    if (root.TryGetProperty("learn", out var learn)) settings.Learn = learn.ValueKind == System.Text.Json.JsonValueKind.True;
+                    if (root.TryGetProperty("tell", out var tell)) settings.LearnTell = tell.ValueKind == System.Text.Json.JsonValueKind.True;
+                    if (root.TryGetProperty("quiet", out var quiet)) settings.LearnQuiet = quiet.ValueKind == System.Text.Json.JsonValueKind.True;
+                    store.Save(settings);
+                    var session = _session.SessionJson();
+                    _ = Dispatcher.BeginInvoke(() => _tray?.ShowLearn(settings.Learn, settings.LearnTell, settings.LearnQuiet));
+                    _ = _phones!.BroadcastAsync(Packet.Of("session", session));
+                    return Packet.Of("session", session, packet.CallId);
+                case "memoryUse":
+                {
+                    var book = _memory.Load();
+                    if (UserMemory.SetUse(book, root.GetProperty("id").GetString() ?? "", root.GetProperty("use").GetString() ?? ""))
+                        _memory.Save(book);
+                    break;
+                }
+                case "memoryForget":
+                    if (root.TryGetProperty("all", out var all) && all.ValueKind == System.Text.Json.JsonValueKind.True)
+                    {
+                        _memory.ForgetEverything();
+                        note = "Forgotten. A copy is in the backups.";
+                    }
+                    else
+                    {
+                        var book = _memory.Load();
+                        if (UserMemory.ForgetId(book, root.GetProperty("id").GetString() ?? "")) _memory.Save(book);
+                    }
+                    break;
+                case "memoryBackup":
+                {
+                    var path = _memory.Backup();
+                    note = path == null ? "There is nothing to save yet." : "Saved a copy on this PC.";
+                    break;
+                }
+                case "memoryRestore":
+                    note = _memory.Restore(root.GetProperty("name").GetString() ?? "", root.TryGetProperty("add", out var add) && add.ValueKind == System.Text.Json.JsonValueKind.True);
+                    break;
+            }
+            var snapshot = _memory.Snapshot(settings.Learn, settings.LearnTell, settings.LearnQuiet, note);
+            _ = _phones!.BroadcastAsync(Packet.Of("memory", snapshot));
+            return Packet.Of("memory", snapshot, packet.CallId);
+        }
+        catch (Exception ex)
+        {
+            return Packet.Of("memory", System.Text.Json.JsonSerializer.Serialize(new { error = ex.Message }), packet.CallId);
+        }
     }
 
     private void PumpFace(SettingsStore store)

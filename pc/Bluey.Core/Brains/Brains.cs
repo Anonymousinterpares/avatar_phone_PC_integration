@@ -68,6 +68,7 @@ public sealed class AskInput
     public bool ComputerControl { get; init; }
     public bool NoTouch { get; init; }
     public bool SpeakAloud { get; init; }
+    public string? MemoryNote { get; init; }
 }
 
 public sealed class ModelReply
@@ -106,7 +107,7 @@ public static class Personality
     Speech is turned on. You speak your reply aloud to the user. In the final reply, wrap the words to be spoken in [[spoken]] and [[/spoken]], for example: [[spoken]]Hello mate![[/spoken]]. One short spoken answer, under fifteen words, the actual answer. The bubble shows the whole reply. Words outside those marks are not spoken. Leave the marks out while you are still calling tools. Do not put tool names, screen text, or a plan inside the marks.
     """;
 
-    public static string Instructions(bool computerControl, bool speakAloud = false, bool noTouch = false)
+    public static string Instructions(bool computerControl, bool speakAloud = false, bool noTouch = false, string? memoryNote = null)
     {
         var basePrompt = speakAloud
             ? Base.Replace(
@@ -118,6 +119,7 @@ public static class Personality
         else if (computerControl) text += "\n\n" + ScreenActions + "\n\n" + Computer + "\n\nNo-touch is off.";
         else text += "\n\nNo-touch is off. Look and point.";
         if (speakAloud) text += "\n\n" + Spoken;
+        if (!string.IsNullOrWhiteSpace(memoryNote)) text += "\n\n" + memoryNote.Trim();
         return text;
     }
 }
@@ -322,6 +324,8 @@ public sealed class BrainClient
 
     public AppSettings Settings => _store.Load();
 
+    public Func<string?>? LiveMemoryNote { get; set; }
+
     public void Save(AppSettings settings) => _store.Save(settings);
 
     public async Task<LiveSecret> MintAsync(AppSettings settings, CancellationToken cancellationToken)
@@ -475,7 +479,7 @@ public sealed class BrainClient
     {
         var session = new Dictionary<string, object?>
         {
-            ["instructions"] = Personality.Instructions(settings.ComputerControl, noTouch: settings.NoTouch),
+            ["instructions"] = Personality.Instructions(settings.ComputerControl, noTouch: settings.NoTouch, memoryNote: LiveMemoryNote?.Invoke()),
             ["tools"] = ToolCatalog.OpenAiTools(settings.ComputerControl, settings.NoTouch),
             ["tool_choice"] = "auto",
         };
@@ -581,7 +585,7 @@ public sealed class BrainClient
             ["model"] = model,
             ["store"] = false,
             ["stream"] = true,
-            ["instructions"] = Personality.Instructions(ask.ComputerControl, ask.SpeakAloud, ask.NoTouch),
+            ["instructions"] = Personality.Instructions(ask.ComputerControl, ask.SpeakAloud, ask.NoTouch, ask.MemoryNote),
             ["tools"] = ToolCatalog.OpenAiTools(ask.ComputerControl, ask.NoTouch),
             ["input"] = input,
         };
@@ -705,7 +709,7 @@ public sealed class BrainClient
         {
             ["model"] = settings.AnthropicModel,
             ["max_tokens"] = 1024,
-            ["system"] = Personality.Instructions(ask.ComputerControl, ask.SpeakAloud, ask.NoTouch),
+            ["system"] = Personality.Instructions(ask.ComputerControl, ask.SpeakAloud, ask.NoTouch, ask.MemoryNote),
             ["tools"] = ToolCatalog.AnthropicTools(ask.ComputerControl, ask.NoTouch),
             ["messages"] = messages,
         };
@@ -759,7 +763,7 @@ public sealed class BrainClient
             throw new InvalidOperationException(route.MissingKey);
         var messages = new List<object>
         {
-            new Dictionary<string, object> { ["role"] = "system", ["content"] = Personality.Instructions(ask.ComputerControl, ask.SpeakAloud, ask.NoTouch) },
+            new Dictionary<string, object> { ["role"] = "system", ["content"] = Personality.Instructions(ask.ComputerControl, ask.SpeakAloud, ask.NoTouch, ask.MemoryNote) },
         };
         var recent = RecentTurns(ask);
         var pictured = PictureTurn(ask, recent, out var carried);

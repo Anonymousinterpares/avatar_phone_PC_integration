@@ -39,6 +39,7 @@ public sealed class CursorOverlay : Window
     private string _sleepCorner = "bottom-right";
     private string _bubble = "bar";
     private bool _noTouch;
+    private bool _learn;
     private string _captionText = "";
     private bool _captionVoiced;
     private SpeechMarks? _pendingMarks;
@@ -73,6 +74,7 @@ public sealed class CursorOverlay : Window
     public event Action<bool>? UserHiddenChanged;
     public event Action? TalkRequested;
     public event Action? NoTouchToggleRequested;
+    public event Action? LearnToggleRequested;
 
     public CursorOverlay()
     {
@@ -255,6 +257,8 @@ public sealed class CursorOverlay : Window
     }
 
     public void SetNoTouch(bool on) => Dispatcher.Invoke(() => _noTouch = on);
+
+    public void SetLearn(bool on) => Dispatcher.Invoke(() => _learn = on);
 
     public void PlaceNearBerry(System.Windows.Window window)
     {
@@ -510,11 +514,12 @@ public sealed class CursorOverlay : Window
     {
         EndDrag();
         e.Handled = true;
-        var menu = new BerryDotMenu(_noTouch);
+        var menu = new BerryDotMenu(_noTouch, _learn);
         menu.HideChosen += () => SetUserHidden(true);
         menu.TalkChosen += () => TalkRequested?.Invoke();
         menu.SleepChosen += () => Sleep();
         menu.NoTouchChosen += () => NoTouchToggleRequested?.Invoke();
+        menu.LearnChosen += () => LearnToggleRequested?.Invoke();
         PlaceNearBerry(menu);
     }
 
