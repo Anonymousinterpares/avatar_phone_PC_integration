@@ -8,6 +8,8 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.waitForUpOrCancellation
@@ -105,6 +107,8 @@ data class Ui(
     val learnQuiet: Boolean = false,
     val memoryOpen: Boolean = false,
     val memoryBody: String = "",
+    val commands: Boolean = false,
+    val commandAsk: String = "",
 )
 
 private val Berry1 = Color(0xFFA9BCFF)
@@ -135,6 +139,7 @@ fun BlueyScreen(
     onLearnQuiet: (Boolean) -> Unit = {},
     onLearnTell: (Boolean) -> Unit = {},
     onMemoryOpen: () -> Unit = {},
+    onCommands: (Boolean) -> Unit = {},
 ) {
     var typingOpen by remember { mutableStateOf(false) }
     var soundSettingsOpen by remember { mutableStateOf(false) }
@@ -273,6 +278,23 @@ fun BlueyScreen(
             }
             Button(onClick = onMemoryOpen, modifier = Modifier.fillMaxWidth()) {
                 Text("What he remembers")
+            }
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(Color(0xFF1E1B2E), RoundedCornerShape(12.dp))
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
+                    Text("Let him run commands", color = Color.White, fontSize = 15.sp)
+                    Text(
+                        "Off until you turn it on. He asks here before a program runs. Pick the folder on the PC.",
+                        color = Color(0xFFB9B2CC),
+                        fontSize = 12.sp,
+                    )
+                }
+                Switch(checked = ui.commands, onCheckedChange = onCommands)
             }
         }
         if (ui.awake) {
@@ -454,6 +476,49 @@ fun BlueyScreen(
                 }
             }
         }
+    }
+}
+
+@Composable
+fun CommandAskScreen(body: String, onChoice: (String) -> Unit) {
+    val parsed = remember(body) {
+        try {
+            val doc = org.json.JSONObject(body)
+            val args = doc.optJSONArray("args")
+            val words = mutableListOf<String>()
+            if (args != null) {
+                for (index in 0 until args.length()) words.add(args.optString(index))
+            }
+            Triple(doc.optString("display", doc.optString("program")), doc.optString("folder"), words.toList())
+        } catch (_: Exception) {
+            Triple(body, "", emptyList<String>())
+        }
+    }
+    androidx.activity.compose.BackHandler { onChoice("no") }
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black)
+            .verticalScroll(rememberScrollState())
+            .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Text("Run this program?", color = Color.White, fontSize = 22.sp)
+        Text(parsed.first.ifBlank { "A program" }, color = Color.White, fontSize = 18.sp)
+        Text("Folder", color = Color(0xFFB9B2CC), fontSize = 13.sp)
+        Text(parsed.second.ifBlank { "No folder" }, color = Color.White, fontSize = 15.sp)
+        if (parsed.third.isNotEmpty()) {
+            Text("Arguments", color = Color(0xFFB9B2CC), fontSize = 13.sp)
+            parsed.third.forEach { word -> Text(word, color = Color.White, fontSize = 15.sp) }
+        }
+        Text(
+            "Run once does it this time. Always allow saves this exact program, these arguments, and this folder. No answer counts as no.",
+            color = Color(0xFFB9B2CC),
+            fontSize = 13.sp,
+        )
+        Button(onClick = { onChoice("once") }, modifier = Modifier.fillMaxWidth()) { Text("Run once") }
+        Button(onClick = { onChoice("always") }, modifier = Modifier.fillMaxWidth()) { Text("Always allow") }
+        Button(onClick = { onChoice("no") }, modifier = Modifier.fillMaxWidth()) { Text("No") }
     }
 }
 

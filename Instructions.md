@@ -171,6 +171,14 @@ While it is on, he keeps one memory file for you on this computer and loads that
 
 **Save a copy** writes a file you can keep. **Load a copy** puts a file back. He also keeps his own backups. **Forget everything** clears the habits and likes, keeps the "don't remember" lines, and saves a backup first. He does not keep passwords or card numbers.
 
+## Let him run a command
+
+This is off until you turn it on. It is separate from **Let him use the computer**. Right-click the Bluey icon and check **Let him run commands**. The same switch is on the phone, and on a right-click of the blueberry.
+
+Choose **Command folder…** before the first run. He will not use a whole drive, and he will not run until that folder is set. Ask him to run a program by name, such as git, with its arguments as separate words. He shows the program, the arguments, and the folder on the computer and on the phone. **Run once** does it this time. **Always allow** saves that exact line so the next identical one can run on its own. **No**, or no answer, does nothing. One yes does not become a habit.
+
+He will not open cmd or PowerShell, and he will not read passwords, keys, or his own settings. A run is written only on this computer. **Ctrl+Alt+S** stops him and stops a program he started. **No touch** blocks it. Turn the switch on before a live voice call if you want it during that call.
+
 ## 7. Open the computer screen on the phone
 
 1. On the phone, tap **Remote Desktop**.

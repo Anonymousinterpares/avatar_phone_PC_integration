@@ -134,7 +134,9 @@ class MainActivity : ComponentActivity() {
             deskMutePc = deskMutePc,
         )
         setContent {
-            if (ui.helpEntry && !ui.deskMode) {
+            if (ui.commandAsk.isNotEmpty() && !ui.helpMode) {
+                CommandAskScreen(body = ui.commandAsk, onChoice = { choice -> answerCommand(choice) })
+            } else if (ui.helpEntry && !ui.deskMode) {
                 HelpCodeScreen(
                     onSubmit = { code -> submitHelp(code) },
                     onBack = { ui = ui.copy(helpEntry = false) },
@@ -220,6 +222,7 @@ class MainActivity : ComponentActivity() {
                     onLearnQuiet = { setLearn(ui.learn, ui.learnTell, it) },
                     onLearnTell = { setLearn(ui.learn, it, ui.learnQuiet) },
                     onMemoryOpen = { openMemory() },
+                    onCommands = { setCommands(it) },
                 )
             }
         }
@@ -552,6 +555,7 @@ class MainActivity : ComponentActivity() {
             learn = session.optBoolean("learn"),
             learnTell = session.optBoolean("learnTell"),
             learnQuiet = session.optBoolean("learnQuiet"),
+            commands = session.optBoolean("commands"),
         )
         if (!ui.awake) return
         if (realtime) startMic() else stopMic()
@@ -584,6 +588,7 @@ class MainActivity : ComponentActivity() {
                 armCaptionExpiry()
             }
             "session" -> applySession(JSONObject(packet.optString("text", "{}")))
+            "commandAsk" -> ui = ui.copy(commandAsk = packet.optString("text"))
             "memory" -> ui = ui.copy(memoryBody = packet.optString("text"))
             "caption" -> {
                 captionGeneration++
@@ -909,6 +914,29 @@ class MainActivity : ComponentActivity() {
         if (!link.connected) return
         work.execute {
             try { link.send("ttsTest", "Testing Supertonic 3 text to speech. Bluey audio is working.") } catch (_: Exception) { }
+        }
+    }
+
+    private fun setCommands(enabled: Boolean) {
+        ui = ui.copy(commands = enabled)
+        if (!link.connected) return
+        work.execute {
+            try { link.send("commands", if (enabled) "true" else "false") } catch (_: Exception) { }
+        }
+    }
+
+    private fun answerCommand(choice: String) {
+        val body = ui.commandAsk
+        ui = ui.copy(commandAsk = "")
+        if (!link.connected || body.isEmpty()) return
+        work.execute {
+            try {
+                val doc = JSONObject(body)
+                val answer = JSONObject()
+                answer.put("id", doc.optString("id"))
+                answer.put("choice", choice)
+                link.send("commandAnswer", answer.toString())
+            } catch (_: Exception) { }
         }
     }
 

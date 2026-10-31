@@ -1,7 +1,7 @@
 using System.IO;
 using System.Net;
 using System.Net.Sockets;
-using System.Text;
+using System.Threading.Channels;
 using Bluey.Protocol;
 using Makaretu.Dns;
 
@@ -31,6 +31,12 @@ public sealed class PhoneLink : IDisposable
     public string AddressText { get; private set; } = "";
     public Action? OnClientsCleared { get; set; }
     public Action<string>? OnClientClosed { get; set; }
+
+    /// <summary>
+    /// Handles a packet on the read thread and keeps reading. Return true when the packet is done.
+    /// A command answer has to take this path, or a tool waiting on that answer never sees it.
+    /// </summary>
+    public Func<Packet, bool>? TryHandleImmediately { get; set; }
 
     public void Start()
     {
@@ -106,8 +112,10 @@ public sealed class PhoneLink : IDisposable
         var buffer = new byte[64 * 1024];
         var length = 0;
         var writeLock = new SemaphoreSlim(1, 1);
+        var inbox = Channel.CreateUnbounded<Packet>(new UnboundedChannelOptions { SingleReader = true, SingleWriter = true });
         CurrentClient.Value = clientId;
         lock (_gate) _senders[clientId] = SendToThis;
+        var worker = Task.Run(() => HandleLoop(clientId, inbox.Reader));
         try
         {
             while (!_cancel.IsCancellationRequested)
@@ -119,8 +127,8 @@ public sealed class PhoneLink : IDisposable
                 foreach (var packet in ProtocolJson.Decode(ref buffer, ref length))
                 {
                     CurrentClient.Value = clientId;
-                    var reply = await _onPacket(packet, SendToThis, _cancel.Token);
-                    if (reply != null) await SendToThis(reply);
+                    if (TryHandle(packet)) continue;
+                    await inbox.Writer.WriteAsync(packet, _cancel.Token);
                 }
             }
         }
@@ -130,11 +138,43 @@ public sealed class PhoneLink : IDisposable
         }
         finally
         {
+            inbox.Writer.TryComplete();
+            try { await worker; } catch (Exception) { }
             lock (_gate) _senders.Remove(clientId);
             Drop(stream);
             OnClientClosed?.Invoke(clientId);
             client.Dispose();
             writeLock.Dispose();
+        }
+
+        bool TryHandle(Packet packet)
+        {
+            var immediate = TryHandleImmediately;
+            if (immediate == null) return false;
+            try { return immediate(packet); }
+            catch (Exception) { return true; }
+        }
+
+        async Task HandleLoop(string id, ChannelReader<Packet> reader)
+        {
+            try
+            {
+                await foreach (var packet in reader.ReadAllAsync(_cancel.Token))
+                {
+                    try
+                    {
+                        CurrentClient.Value = id;
+                        var reply = await _onPacket(packet, SendToThis, _cancel.Token);
+                        if (reply != null) await SendToThis(reply);
+                    }
+                    catch (OperationCanceledException) { return; }
+                    catch (Exception)
+                    {
+                        // One bad packet stays on this phone. The next one still runs.
+                    }
+                }
+            }
+            catch (OperationCanceledException) { }
         }
 
         async Task SendToThis(Packet packet)

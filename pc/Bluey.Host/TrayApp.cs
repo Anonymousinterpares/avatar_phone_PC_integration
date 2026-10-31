@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.IO;
 using System.Drawing.Drawing2D;
 using System.Net;
 using System.Net.Http;
@@ -8,6 +9,7 @@ using System.Text;
 using System.Windows.Forms;
 using Bluey.Auth;
 using Bluey.Brains;
+using Bluey.Commands;
 using Bluey.Memory;
 using Bluey.Protocol;
 using Bluey.Session;
@@ -27,6 +29,7 @@ public sealed class TrayApp : IDisposable
     private readonly SpeechConfigStore _speech;
     private readonly SupertonicSpeaker _speaker;
     private readonly MemoryStore _memory;
+    private readonly CommandStore _commands;
     private readonly NotifyIcon _icon;
     private readonly Icon _iconImage;
     private readonly ToolStripMenuItem _modeItem;
@@ -34,13 +37,14 @@ public sealed class TrayApp : IDisposable
     private ToolStripMenuItem _learnItem = null!;
     private ToolStripMenuItem _quietItem = null!;
     private ToolStripMenuItem _tellItem = null!;
+    private ToolStripMenuItem _commandsItem = null!;
 
     private readonly Action _allowHelp;
     private readonly Action _helpSomeone;
     private ToolStripMenuItem? _hiddenItem;
     private BerryTalkWindow? _talkWindow;
 
-    public TrayApp(AppSettings settings, SettingsStore store, BrainClient brains, CharacterSession session, PhoneLink phones, CursorOverlay overlay, UsageHintsWindow hints, SpeechConfigStore speech, SupertonicSpeaker speaker, MemoryStore memory, Action allowHelp, Action helpSomeone)
+    public TrayApp(AppSettings settings, SettingsStore store, BrainClient brains, CharacterSession session, PhoneLink phones, CursorOverlay overlay, UsageHintsWindow hints, SpeechConfigStore speech, SupertonicSpeaker speaker, MemoryStore memory, CommandStore commands, Action allowHelp, Action helpSomeone)
     {
         _settings = settings;
         _store = store;
@@ -52,6 +56,7 @@ public sealed class TrayApp : IDisposable
         _speech = speech;
         _speaker = speaker;
         _memory = memory;
+        _commands = commands;
         _allowHelp = allowHelp;
         _helpSomeone = helpSomeone;
         _modeItem = new ToolStripMenuItem("Mode") { Enabled = false };
@@ -79,6 +84,7 @@ public sealed class TrayApp : IDisposable
         _overlay.TalkRequested += ShowBerryTalk;
         _overlay.SetNoTouch(_settings.NoTouch);
         _overlay.SetLearn(_settings.Learn);
+        _overlay.SetCommands(_settings.Commands);
         _overlay.NoTouchToggleRequested += () =>
         {
             _settings.NoTouch = !_settings.NoTouch;
@@ -91,6 +97,15 @@ public sealed class TrayApp : IDisposable
             _settings.Learn = !_settings.Learn;
             _store.Save(_settings);
             ShowLearn(_settings.Learn, _settings.LearnTell, _settings.LearnQuiet);
+            _ = _phones.BroadcastAsync(Packet.Of("session", _session.SessionJson()));
+        };
+        _overlay.CommandsToggleRequested += () =>
+        {
+            var next = !_settings.Commands;
+            if (next && string.IsNullOrWhiteSpace(_commands.Load().Folder) && !EnsureCommandFolder()) return;
+            _settings.Commands = next;
+            _store.Save(_settings);
+            ShowCommands(_settings.Commands);
             _ = _phones.BroadcastAsync(Packet.Of("session", _session.SessionJson()));
         };
     }
@@ -209,6 +224,23 @@ public sealed class TrayApp : IDisposable
         menu.Items.Add(_quietItem);
         menu.Items.Add(_tellItem);
         menu.Items.Add("What he remembers…", null, (_, _) => ShowMemory());
+        _commandsItem = new ToolStripMenuItem("Let him run commands") { Checked = _settings.Commands, CheckOnClick = true };
+        _commandsItem.CheckedChanged += (_, _) =>
+        {
+            if (_commandsItem.Checked == _settings.Commands) return;
+            if (_commandsItem.Checked && string.IsNullOrWhiteSpace(_commands.Load().Folder) && !EnsureCommandFolder())
+            {
+                _commandsItem.Checked = false;
+                return;
+            }
+            _settings.Commands = _commandsItem.Checked;
+            _store.Save(_settings);
+            ShowCommands(_settings.Commands);
+            _ = _phones.BroadcastAsync(Packet.Of("session", _session.SessionJson()));
+        };
+        menu.Items.Add(_commandsItem);
+        menu.Items.Add("Command folder…", null, (_, _) => EnsureCommandFolder());
+        menu.Items.Add("Commands he may run…", null, (_, _) => ShowAllowedCommands());
         var hints = new ToolStripMenuItem("Show usage hints") { Checked = _settings.UsageHints, CheckOnClick = true };
         hints.CheckedChanged += (_, _) =>
         {
@@ -338,6 +370,68 @@ public sealed class TrayApp : IDisposable
         if (_learnItem.Checked != learn) _learnItem.Checked = learn;
         if (_quietItem.Checked != quiet) _quietItem.Checked = quiet;
         if (_tellItem.Checked != tell) _tellItem.Checked = tell;
+    }
+
+    public void ShowCommands(bool enabled)
+    {
+        _overlay.SetCommands(enabled);
+        if (_commandsItem.Checked == enabled) return;
+        _commandsItem.Checked = enabled;
+    }
+
+    private bool EnsureCommandFolder()
+    {
+        var current = _commands.Load().Folder;
+        using var dialog = new FolderBrowserDialog
+        {
+            Description = "Choose the folder commands may use",
+            UseDescriptionForTitle = true,
+            SelectedPath = Directory.Exists(current) ? current : "",
+        };
+        if (dialog.ShowDialog() != DialogResult.OK) return Directory.Exists(current);
+        var error = _commands.SetFolder(dialog.SelectedPath);
+        if (error == null) return true;
+        MessageBox.Show(error, "Bluey", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        return false;
+    }
+
+    private void ShowAllowedCommands()
+    {
+        using var form = new Form
+        {
+            Text = "Commands he may run",
+            Width = 560,
+            Height = 380,
+            StartPosition = FormStartPosition.CenterScreen,
+            FormBorderStyle = FormBorderStyle.FixedDialog,
+            MinimizeBox = false,
+            MaximizeBox = false,
+        };
+        var list = new ListBox { Left = 12, Top = 36, Width = 520, Height = 240 };
+        var empty = new Label { Text = "Nothing is allowed yet. He asks every time.", Left = 12, Top = 12, AutoSize = true };
+        void Fill()
+        {
+            list.Items.Clear();
+            foreach (var item in _commands.Load().Allow)
+                list.Items.Add(item.Program + " " + string.Join(" ", item.Args) + "    " + item.Folder);
+            empty.Visible = list.Items.Count == 0;
+        }
+        Fill();
+        var remove = new Button { Text = "Remove", Left = 12, Top = 292, Width = 90 };
+        remove.Click += (_, _) =>
+        {
+            if (list.SelectedIndex < 0) return;
+            _commands.RemoveAt(list.SelectedIndex);
+            Fill();
+        };
+        var close = new Button { Text = "Close", DialogResult = DialogResult.OK, Left = 442, Top = 292, Width = 90 };
+        form.Controls.Add(empty);
+        form.Controls.Add(list);
+        form.Controls.Add(remove);
+        form.Controls.Add(close);
+        form.AcceptButton = close;
+        form.CancelButton = close;
+        form.ShowDialog();
     }
 
     private void ShowMemory()

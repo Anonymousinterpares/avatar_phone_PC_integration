@@ -4,6 +4,7 @@ using System.Windows.Interop;
 using System.Windows.Threading;
 using Bluey.Auth;
 using Bluey.Brains;
+using Bluey.Commands;
 using Bluey.Desk;
 using Bluey.Memory;
 using Bluey.Protocol;
@@ -19,6 +20,8 @@ public partial class App : System.Windows.Application
     private CursorOverlay? _overlay;
     private CharacterSession? _session;
     private MemoryStore? _memory;
+    private CommandStore? _commandStore;
+    private CommandPrompt? _commandPrompt;
     private SupertonicSpeaker? _speaker;
     private DesktopStreamer? _streamer;
     private AudioStreamer? _audioStreamer;
@@ -46,8 +49,10 @@ public partial class App : System.Windows.Application
         _speaker = new SupertonicSpeaker(speech);
         _memory = new MemoryStore();
         _memory.Open();
-        _session = new CharacterSession(brains, desk, _speaker, _memory);
+        _commandStore = new CommandStore();
+        _session = new CharacterSession(brains, desk, _speaker, _memory, _commandStore);
         _session.AllowLearning = () => !_help.IsHelper(PhoneLink.CurrentClientId);
+        _session.AllowCommands = () => !_help.IsHelper(PhoneLink.CurrentClientId);
         brains.LiveMemoryNote = () =>
         {
             var current = store.Load();
@@ -395,6 +400,16 @@ public partial class App : System.Windows.Application
                     _ = _phones!.BroadcastAsync(Packet.Of("session", json));
                     return Packet.Of("session", json, packet.CallId);
                 }
+                case "commands":
+                {
+                    var enabled = packet.Text is "true" or "1";
+                    settings.Commands = enabled;
+                    store.Save(settings);
+                    var json = _session!.SessionJson();
+                    _ = Dispatcher.BeginInvoke(() => _tray?.ShowCommands(enabled));
+                    _ = _phones!.BroadcastAsync(Packet.Of("session", json));
+                    return Packet.Of("session", json, packet.CallId);
+                }
                 case "memoryGet":
                 case "memoryFlags":
                 case "memoryUse":
@@ -414,6 +429,15 @@ public partial class App : System.Windows.Application
                     return await _session!.HandleAsync(packet, push, token);
             }
         });
+        var prompt = new CommandPrompt(_phones);
+        _commandPrompt = prompt;
+        _session.ApproveCommand = prompt.AskAsync;
+        _phones.TryHandleImmediately = packet =>
+        {
+            if (packet.Command != "commandAnswer") return false;
+            if (!_help.IsHelper(PhoneLink.CurrentClientId)) prompt.Offer(packet.Text);
+            return true;
+        };
         _phones.OnClientsCleared = () =>
         {
             _streamer?.Stop();
@@ -429,7 +453,7 @@ public partial class App : System.Windows.Application
         var hints = new UsageHintsWindow();
         hints.Show();
         hints.SetEnabled(settings.UsageHints);
-        _tray = new TrayApp(settings, store, brains, _session, _phones, _overlay, hints, speech, _speaker, _memory, ShowHelpCode, ShowRemoteHelp);
+        _tray = new TrayApp(settings, store, brains, _session, _phones, _overlay, hints, speech, _speaker, _memory, _commandStore, ShowHelpCode, ShowRemoteHelp);
         var helpSweep = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
         helpSweep.Tick += (_, _) => SweepHelpControl();
         helpSweep.Start();

@@ -173,7 +173,7 @@ public sealed class UsageHintsWindow : Window
             "Ask “what’s this?” with the mouse on the thing you mean. He looks, then flies over to it.",
             "Ask “what does this button mean?” or “read this number.”",
             "Say “stop pointing” or “go home.” Sleeping him also sends him to the bottom of the screen.",
-            "Ctrl+Alt+S stops him and sends him home.",
+            "Ctrl+Alt+S stops him, stops a program he started, and sends him home.",
         }),
         ("Look things up", new[]
         {
@@ -189,6 +189,13 @@ public sealed class UsageHintsWindow : Window
             "“Type hello and press enter.” “Press ctrl+t.” “Scroll down.” “Drag this onto the desktop.”",
             "Before sending, deleting, buying, or closing unsaved work, he says what he is about to do and waits.",
             "He will not type a password, and he will not press Win+L or Ctrl+Alt+Delete.",
+        }),
+        ("Commands", new[]
+        {
+            "Let him run commands is off until you turn it on. It is separate from Let him use the computer.",
+            "Pick Command folder… first. He asks before each new program, on the PC and on the phone.",
+            "Run once is only this time. Always allow saves that exact program, those arguments, and that folder.",
+            "He will not run a shell. No answer counts as no. One yes does not become a habit.",
         }),
         ("The tray", new[]
         {

@@ -69,6 +69,7 @@ public sealed class AskInput
     public bool NoTouch { get; init; }
     public bool SpeakAloud { get; init; }
     public string? MemoryNote { get; init; }
+    public bool Commands { get; init; }
 }
 
 public sealed class ModelReply
@@ -103,11 +104,15 @@ public static class Personality
     No-touch is on. The user is away from the computer and wants to know what is happening on the screen. Call look_at_screen, then describe it. You may point at the part you are talking about. That pointer is yours, not the Windows mouse. If the user asks you to change the computer or do a task on it, do not try. Tell them plainly that no-touch mode is on, so you cannot do that task. Do not answer with only a description of the screen.
     """;
 
+    public const string Commands = """
+    You may run a program with run_command when the user asks. Pass the program name and a list of arguments. Do not use cmd, PowerShell, or one long command string. The user is asked before it runs, unless that exact command is already allowed. It runs only in the command folder they chose.
+    """;
+
     public const string Spoken = """
     Speech is turned on. You speak your reply aloud to the user. In the final reply, wrap the words to be spoken in [[spoken]] and [[/spoken]], for example: [[spoken]]Hello mate![[/spoken]]. One short spoken answer, under fifteen words, the actual answer. The bubble shows the whole reply. Words outside those marks are not spoken. Leave the marks out while you are still calling tools. Do not put tool names, screen text, or a plan inside the marks.
     """;
 
-    public static string Instructions(bool computerControl, bool speakAloud = false, bool noTouch = false, string? memoryNote = null)
+    public static string Instructions(bool computerControl, bool speakAloud = false, bool noTouch = false, string? memoryNote = null, bool commands = false)
     {
         var basePrompt = speakAloud
             ? Base.Replace(
@@ -118,6 +123,7 @@ public static class Personality
         if (noTouch) text += "\n\n" + NoTouchMode;
         else if (computerControl) text += "\n\n" + ScreenActions + "\n\n" + Computer + "\n\nNo-touch is off.";
         else text += "\n\nNo-touch is off. Look and point.";
+        if (commands && !noTouch) text += "\n\n" + Commands;
         if (speakAloud) text += "\n\n" + Spoken;
         if (!string.IsNullOrWhiteSpace(memoryNote)) text += "\n\n" + memoryNote.Trim();
         return text;
@@ -167,7 +173,12 @@ public static class ToolCatalog
             """{"type":"object","properties":{"url":{"type":"string"}},"required":["url"]}"""),
     };
 
-    public static List<Dictionary<string, object>> OpenAiTools(bool computerControl, bool noTouch = false)
+    private static readonly (string Name, string Description, string Parameters) CommandTool =
+        ("run_command",
+            "Run a program by name with a list of arguments. Do not pass a shell command. The user is asked first unless this exact command is already allowed.",
+            """{"type":"object","properties":{"program":{"type":"string","description":"Program name, like git or dotnet. Not cmd or powershell."},"args":{"type":"array","items":{"type":"string"},"description":"Arguments as separate words."}},"required":["program"]}""");
+
+    public static List<Dictionary<string, object>> OpenAiTools(bool computerControl, bool noTouch = false, bool commands = false)
     {
         var tools = Always.Select(tool => (Dictionary<string, object>)new Dictionary<string, object>
         {
@@ -176,6 +187,16 @@ public static class ToolCatalog
             ["description"] = LookDescription(tool.Name, tool.Description, noTouch),
             ["parameters"] = JsonSerializer.Deserialize<JsonElement>(tool.Parameters),
         }).ToList();
+        if (commands && !noTouch)
+        {
+            tools.Add(new Dictionary<string, object>
+            {
+                ["type"] = "function",
+                ["name"] = CommandTool.Name,
+                ["description"] = CommandTool.Description,
+                ["parameters"] = JsonSerializer.Deserialize<JsonElement>(CommandTool.Parameters),
+            });
+        }
         if (!computerControl || noTouch) return tools;
         tools.AddRange(Actions.Select(tool => new Dictionary<string, object>
         {
@@ -192,9 +213,9 @@ public static class ToolCatalog
             ? "Take a fresh look at the user's screen. Returns the frontmost app, its text, and a screenshot. Call this before you describe the screen, and again whenever it may have changed."
             : description;
 
-    public static List<Dictionary<string, object>> ChatTools(bool computerControl, bool noTouch = false)
+    public static List<Dictionary<string, object>> ChatTools(bool computerControl, bool noTouch = false, bool commands = false)
     {
-        return OpenAiTools(computerControl, noTouch).Select(tool => new Dictionary<string, object>
+        return OpenAiTools(computerControl, noTouch, commands).Select(tool => new Dictionary<string, object>
         {
             ["type"] = "function",
             ["function"] = new Dictionary<string, object>
@@ -206,9 +227,10 @@ public static class ToolCatalog
         }).ToList();
     }
 
-    public static List<Dictionary<string, object>> AnthropicTools(bool computerControl, bool noTouch = false)
+    public static List<Dictionary<string, object>> AnthropicTools(bool computerControl, bool noTouch = false, bool commands = false)
     {
         IEnumerable<(string Name, string Description, string Parameters)> all = Always.Select(tool => (tool.Name, tool.Description, tool.Parameters));
+        if (commands && !noTouch) all = all.Append(CommandTool);
         if (computerControl && !noTouch) all = all.Concat(Actions.Select(tool => (tool.Name, tool.Description, tool.Parameters)));
         return all.Select(tool => new Dictionary<string, object>
         {
@@ -479,8 +501,8 @@ public sealed class BrainClient
     {
         var session = new Dictionary<string, object?>
         {
-            ["instructions"] = Personality.Instructions(settings.ComputerControl, noTouch: settings.NoTouch, memoryNote: LiveMemoryNote?.Invoke()),
-            ["tools"] = ToolCatalog.OpenAiTools(settings.ComputerControl, settings.NoTouch),
+            ["instructions"] = Personality.Instructions(settings.ComputerControl, noTouch: settings.NoTouch, memoryNote: LiveMemoryNote?.Invoke(), commands: settings.Commands),
+            ["tools"] = ToolCatalog.OpenAiTools(settings.ComputerControl, settings.NoTouch, settings.Commands),
             ["tool_choice"] = "auto",
         };
         if (manualTurns)
@@ -578,8 +600,8 @@ public sealed class BrainClient
             ["model"] = model,
             ["store"] = false,
             ["stream"] = true,
-            ["instructions"] = Personality.Instructions(ask.ComputerControl, ask.SpeakAloud, ask.NoTouch, ask.MemoryNote),
-            ["tools"] = ToolCatalog.OpenAiTools(ask.ComputerControl, ask.NoTouch),
+            ["instructions"] = Personality.Instructions(ask.ComputerControl, ask.SpeakAloud, ask.NoTouch, ask.MemoryNote, ask.Commands),
+            ["tools"] = ToolCatalog.OpenAiTools(ask.ComputerControl, ask.NoTouch, ask.Commands),
             ["input"] = input,
         };
         return await PostResponsesAsync(url, key, payload, cancellationToken);
@@ -702,8 +724,8 @@ public sealed class BrainClient
         {
             ["model"] = settings.AnthropicModel,
             ["max_tokens"] = 1024,
-            ["system"] = Personality.Instructions(ask.ComputerControl, ask.SpeakAloud, ask.NoTouch, ask.MemoryNote),
-            ["tools"] = ToolCatalog.AnthropicTools(ask.ComputerControl, ask.NoTouch),
+            ["system"] = Personality.Instructions(ask.ComputerControl, ask.SpeakAloud, ask.NoTouch, ask.MemoryNote, ask.Commands),
+            ["tools"] = ToolCatalog.AnthropicTools(ask.ComputerControl, ask.NoTouch, ask.Commands),
             ["messages"] = messages,
         };
         using var request = new HttpRequestMessage(HttpMethod.Post, "https://api.anthropic.com/v1/messages");
@@ -756,7 +778,7 @@ public sealed class BrainClient
             throw new InvalidOperationException(route.MissingKey);
         var messages = new List<object>
         {
-            new Dictionary<string, object> { ["role"] = "system", ["content"] = Personality.Instructions(ask.ComputerControl, ask.SpeakAloud, ask.NoTouch, ask.MemoryNote) },
+            new Dictionary<string, object> { ["role"] = "system", ["content"] = Personality.Instructions(ask.ComputerControl, ask.SpeakAloud, ask.NoTouch, ask.MemoryNote, ask.Commands) },
         };
         var recent = RecentTurns(ask);
         var pictured = PictureTurn(ask, recent, out var carried);
@@ -795,7 +817,7 @@ public sealed class BrainClient
             ["model"] = route.Model,
             ["max_completion_tokens"] = 1024,
             ["messages"] = messages,
-            ["tools"] = ToolCatalog.ChatTools(ask.ComputerControl, ask.NoTouch),
+            ["tools"] = ToolCatalog.ChatTools(ask.ComputerControl, ask.NoTouch, ask.Commands),
             ["tool_choice"] = "auto",
         };
         if (route.ReasoningEffort != null) payload["reasoning_effort"] = route.ReasoningEffort;

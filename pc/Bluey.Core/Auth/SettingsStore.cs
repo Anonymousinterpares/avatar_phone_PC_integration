@@ -132,6 +132,7 @@ public sealed class AppSettings
     public bool Learn { get; set; }
     public bool LearnTell { get; set; }
     public bool LearnQuiet { get; set; }
+    public bool Commands { get; set; }
     public bool UsageHints { get; set; } = true;
     public string PhoneSeat { get; set; } = "center";
     public string BerrySize { get; set; } = "large";

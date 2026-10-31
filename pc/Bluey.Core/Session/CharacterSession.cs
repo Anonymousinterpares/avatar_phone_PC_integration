@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Bluey.Auth;
 using Bluey.Brains;
+using Bluey.Commands;
 using Bluey.Desk;
 using Bluey.Memory;
 using Bluey.Protocol;
@@ -74,7 +75,10 @@ public sealed class CharacterSession
     private readonly IDesk _desk;
     private readonly IReplySpeaker? _speaker;
     private readonly MemoryStore _memory;
+    private readonly CommandStore _commands;
+    private readonly CommandRunner _runner;
     private readonly MemoryMoment _moment = new();
+    private CancellationTokenSource? _commandCancel;
     private readonly List<HistoryTurn> _history = new();
     private ScreenCapture? _shot;
     private readonly object _gate = new();
@@ -91,15 +95,19 @@ public sealed class CharacterSession
         public string? Spoken;
     }
 
-    public CharacterSession(BrainClient brains, IDesk desk, IReplySpeaker? speaker = null, MemoryStore? memory = null)
+    public CharacterSession(BrainClient brains, IDesk desk, IReplySpeaker? speaker = null, MemoryStore? memory = null, CommandStore? commands = null)
     {
         _brains = brains;
         _desk = desk;
         _speaker = speaker;
         _memory = memory ?? new MemoryStore();
+        _commands = commands ?? new CommandStore();
+        _runner = new CommandRunner(_commands);
     }
 
     public Func<bool>? AllowLearning { get; set; }
+    public Func<bool>? AllowCommands { get; set; }
+    public Func<CommandProposal, CancellationToken, Task<CommandChoice>>? ApproveCommand { get; set; }
 
     public bool Awake { get; private set; }
     public DateTimeOffset StoppedUntil { get; private set; }
@@ -160,6 +168,7 @@ public sealed class CharacterSession
             learn = settings.Learn,
             learnTell = settings.LearnTell,
             learnQuiet = settings.LearnQuiet,
+            commands = settings.Commands,
         });
     }
 
@@ -169,6 +178,10 @@ public sealed class CharacterSession
         DropLooks();
         CancelOutputs();
         _speaker?.Stop();
+        _runner.Kill();
+        CancellationTokenSource? commandCancel;
+        lock (_gate) commandCancel = _commandCancel;
+        try { commandCancel?.Cancel(); } catch (Exception) { }
         PointChanged?.Invoke(null);
         CaptionChanged?.Invoke("Stopped", false);
     }
@@ -317,6 +330,7 @@ public sealed class CharacterSession
                     NoTouch = settings.NoTouch,
                     SpeakAloud = _speaker?.Enabled == true,
                     MemoryNote = memoryNote,
+                    Commands = settings.Commands,
                 }, cancellationToken);
                 if (!string.IsNullOrWhiteSpace(reply.Text))
                 {
@@ -648,9 +662,64 @@ public sealed class CharacterSession
                 var run = await LookAsync(opened, cancellationToken);
                 return opened.StartsWith("Opened ", StringComparison.Ordinal) ? run : new ToolRun { Text = run.Text, ImageBase64 = run.ImageBase64, Jpeg = run.Jpeg, AppName = run.AppName, Ok = false };
             }
+            case "run_command":
+                return await RunCommandAsync(arguments, cancellationToken);
             default:
                 return new ToolRun { Text = "Unknown tool " + name + "." };
         }
+    }
+
+    private async Task<ToolRun> RunCommandAsync(string arguments, CancellationToken cancellationToken)
+    {
+        var settings = _brains.Settings;
+        var helper = AllowCommands != null && !AllowCommands();
+        var decision = CommandRules.Decide(_commands.Load(), arguments, settings.Commands, settings.NoTouch, DateTimeOffset.UtcNow < StoppedUntil, helper);
+        if (!decision.Ask && !decision.RunNow) return new ToolRun { Text = decision.Reason, Ok = false };
+        var proposal = decision.Proposal!;
+        if (decision.Ask)
+        {
+            if (ApproveCommand == null) return new ToolRun { Text = "I can't ask you from here, so I did not run it.", Ok = false };
+            using var runCancel = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            lock (_gate) _commandCancel = runCancel;
+            CommandChoice choice;
+            try
+            {
+                choice = await ApproveCommand(proposal, runCancel.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                choice = CommandChoice.No;
+            }
+            finally
+            {
+                lock (_gate)
+                {
+                    if (_commandCancel == runCancel) _commandCancel = null;
+                }
+            }
+            if (runCancel.IsCancellationRequested || DateTimeOffset.UtcNow < StoppedUntil)
+            {
+                _commands.Log(proposal.Display + "  stopped");
+                return new ToolRun { Text = "Stopped.", Ok = false };
+            }
+            if (choice == CommandChoice.No)
+            {
+                _commands.Log(proposal.Display + "  no");
+                return new ToolRun { Text = "The user said no, so I did not run it.", Ok = false };
+            }
+            if (choice == CommandChoice.Always) _commands.Allow(proposal);
+        }
+        if (DateTimeOffset.UtcNow < StoppedUntil)
+        {
+            _commands.Log(proposal.Display + "  stopped");
+            return new ToolRun { Text = "Stopped.", Ok = false };
+        }
+        var text = _runner.Run(proposal, cancellationToken);
+        var ok = !text.StartsWith("I can't find ", StringComparison.Ordinal)
+            && !text.StartsWith("That program did not start", StringComparison.Ordinal)
+            && text != "Stopped."
+            && text != "Stopped. That program ran too long.";
+        return new ToolRun { Text = text, Ok = ok };
     }
 
     private async Task<ToolRun> LookAsync(string? prefix, CancellationToken cancellationToken)
