@@ -500,18 +500,11 @@ public sealed class BrainClient
             session["output_modalities"] = new[] { "text" };
             session["audio"] = new Dictionary<string, object>
             {
-                ["input"] = new Dictionary<string, object>
+                ["input"] = new Dictionary<string, object?>
                 {
                     ["format"] = new Dictionary<string, object> { ["type"] = "audio/pcm", ["rate"] = 24000 },
-                    ["turn_detection"] = new Dictionary<string, object>
-                    {
-                        ["type"] = "server_vad",
-                        ["threshold"] = 0.5,
-                        ["prefix_padding_ms"] = 300,
-                        ["silence_duration_ms"] = 500,
-                        ["create_response"] = false,
-                        ["interrupt_response"] = false,
-                    },
+                    // Hold-to-talk commits the buffer when the finger comes up. A pause must not.
+                    ["turn_detection"] = null,
                     ["transcription"] = new Dictionary<string, object> { ["model"] = "gpt-4o-mini-transcribe" },
                 },
             };

@@ -11,7 +11,9 @@ import android.speech.SpeechRecognizer
 
 /**
  * Hold-to-talk text. Android's speech recognizer (the Google speech service on a normal phone)
- * turns audio into text on the phone. The PC then sends that text to the chosen model.
+ * turns audio into text on the phone. The PC is not asked until the finger comes up.
+ * A pause does not finish the sentence. The recognizer often ends a phrase on its own,
+ * so the words so far are kept and listening starts again until stop().
  */
 class PlanSpeech(private val context: Context) {
     interface Listener {
@@ -31,7 +33,7 @@ class PlanSpeech(private val context: Context) {
     private var stopping = false
     private var committed = ""
     private var lastPartial = ""
-    private var restarts = 0
+    private var misses = 0
 
     fun available(): Boolean = SpeechRecognizer.isRecognitionAvailable(context)
 
@@ -42,7 +44,7 @@ class PlanSpeech(private val context: Context) {
         stopping = false
         committed = ""
         lastPartial = ""
-        restarts = 0
+        misses = 0
         val ticket = ++generation
         if (!available()) {
             fail("This phone has no speech recognizer. Install the Google app and allow its microphone.")
@@ -121,18 +123,19 @@ class PlanSpeech(private val context: Context) {
                     finish(lastPartial)
                     return
                 }
-                if (error == SpeechRecognizer.ERROR_NO_MATCH || error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT) {
-                    keepListening(ticket)
+                if (error == SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS) {
+                    fail(describe(error))
                     return
                 }
-                fail(describe(error))
+                val dead = error == SpeechRecognizer.ERROR_CLIENT || error == SpeechRecognizer.ERROR_RECOGNIZER_BUSY
+                keepListening(ticket, recreate = dead)
             }
 
             override fun onPartialResults(partialResults: Bundle?) {
                 if (!current(ticket, mine)) return
                 val text = partialResults.best()
                 if (text.isEmpty()) return
-                restarts = 0
+                misses = 0
                 val shown = join(committed, text)
                 lastPartial = shown
                 listener?.onPartial(shown)
@@ -142,12 +145,13 @@ class PlanSpeech(private val context: Context) {
                 if (!current(ticket, mine)) return
                 val text = results.best()
                 if (text.isNotEmpty()) {
+                    misses = 0
                     committed = join(committed, text)
                     lastPartial = committed
                     listener?.onPartial(committed)
                 }
                 if (!stopping) {
-                    keepListening(ticket)
+                    keepListening(ticket, recreate = false)
                     return
                 }
                 finish(lastPartial)
@@ -156,14 +160,7 @@ class PlanSpeech(private val context: Context) {
             override fun onEvent(eventType: Int, params: Bundle?) {}
         })
         recognizer = created
-        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-            putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
-            putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3)
-            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 1200L)
-            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 8000L)
-            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 5000L)
-        }
+        val intent = recognitionIntent()
         try {
             created.startListening(intent)
         } catch (_: Exception) {
@@ -171,17 +168,33 @@ class PlanSpeech(private val context: Context) {
         }
     }
 
-    private fun keepListening(ticket: Int) {
-        val limit = if (lastPartial.isBlank()) 3 else 8
-        if (restarts >= limit) {
-            if (lastPartial.isBlank()) {
-                fail("Mic is on, but no words came through. Hold the face and speak a full sentence.")
-            }
+    private fun recognitionIntent(): Intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+        putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+        putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
+        putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3)
+        putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 1500L)
+        // Finger up ends the turn. A pause in a long sentence must not.
+        // Some phones ignore these and end anyway. keepListening then continues.
+        putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 20000L)
+        putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 20000L)
+    }
+
+    private fun keepListening(ticket: Int, recreate: Boolean) {
+        if (ticket != generation || stopping || delivered) return
+        misses++
+        if (lastPartial.isBlank() && misses >= 6) {
+            fail("Mic is on, but no words came through. Hold the face and speak a full sentence.")
             return
         }
-        restarts++
-        main.post {
-            if (ticket != generation || stopping || delivered) return@post
+        main.postDelayed({
+            if (ticket != generation || stopping || delivered) return@postDelayed
+            if (!recreate && recognizer != null) {
+                try {
+                    recognizer?.startListening(recognitionIntent())
+                    return@postDelayed
+                } catch (_: Exception) {
+                }
+            }
             val old = recognizer
             recognizer = null
             ear++
@@ -190,7 +203,7 @@ class PlanSpeech(private val context: Context) {
             } catch (_: Exception) {
             }
             listen(ticket)
-        }
+        }, 200)
     }
 
     private fun current(ticket: Int, mine: Int): Boolean {

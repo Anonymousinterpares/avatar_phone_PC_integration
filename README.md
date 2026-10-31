@@ -24,8 +24,8 @@ Bluey uses one answer service at a time. Right-click the tray icon, choose **Sig
 
 There are two ways he hears you:
 
-- **Grok live** and **OpenAI live** keep a live voice connection. While you hold, the phone sends your voice to that service. The real key stays on the PC. The phone receives a short-lived token.
-- **ChatGPT plan**, **Claude**, **Cerebras**, and **OpenRouter** use the phone's own speech recognizer. The phone turns speech into text. When you let go, the PC sends that text and gets the answer back. These modes do not open a live voice socket.
+- **Grok live** and **OpenAI live** keep a live voice connection. While you hold, the phone sends your voice to that service. A pause does not finish the turn. The voice is sent when you let go. The real key stays on the PC. The phone receives a short-lived token.
+- **ChatGPT plan**, **Claude**, **Cerebras**, and **OpenRouter** use the phone's own speech recognizer. The phone turns speech into text and keeps listening through a pause. When you let go, the PC sends the whole sentence and gets the answer back. These modes do not open a live voice socket.
 
 Keys you paste in the tray are saved for the current Windows user in `%AppData%\Bluey\settings.bin`. Cerebras and OpenRouter can also be filled from a `.env` file in this folder when their tray box is empty. That file stays on this machine. Git ignores it. The other modes are typed into the tray, or, for ChatGPT plan, signed in through the browser.
 
