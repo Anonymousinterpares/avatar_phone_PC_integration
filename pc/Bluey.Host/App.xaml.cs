@@ -402,11 +402,24 @@ public partial class App : System.Windows.Application
                 }
                 case "commands":
                 {
-                    var enabled = packet.Text is "true" or "1";
-                    settings.Commands = enabled;
+                    var text = packet.Text ?? "";
+                    if (text is "true" or "1") settings.Commands = true;
+                    else if (text is "false" or "0") settings.Commands = false;
+                    else
+                    {
+                        try
+                        {
+                            using var doc = System.Text.Json.JsonDocument.Parse(string.IsNullOrWhiteSpace(text) ? "{}" : text);
+                            var root = doc.RootElement;
+                            if (root.TryGetProperty("commands", out var commands)) settings.Commands = commands.ValueKind == System.Text.Json.JsonValueKind.True;
+                            if (root.TryGetProperty("medium", out var medium)) settings.CommandsMedium = medium.ValueKind == System.Text.Json.JsonValueKind.True;
+                            if (root.TryGetProperty("high", out var high)) settings.CommandsHigh = high.ValueKind == System.Text.Json.JsonValueKind.True;
+                        }
+                        catch (System.Text.Json.JsonException) { }
+                    }
                     store.Save(settings);
                     var json = _session!.SessionJson();
-                    _ = Dispatcher.BeginInvoke(() => _tray?.ShowCommands(enabled));
+                    _ = Dispatcher.BeginInvoke(() => _tray?.ShowCommands(settings.Commands, settings.CommandsMedium, settings.CommandsHigh));
                     _ = _phones!.BroadcastAsync(Packet.Of("session", json));
                     return Packet.Of("session", json, packet.CallId);
                 }

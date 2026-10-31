@@ -70,6 +70,10 @@ public sealed class AskInput
     public bool SpeakAloud { get; init; }
     public string? MemoryNote { get; init; }
     public bool Commands { get; init; }
+    public bool CommandsMedium { get; init; }
+    public bool CommandsHigh { get; init; }
+    public bool Learn { get; init; }
+    public bool LearnQuiet { get; init; }
 }
 
 public sealed class ModelReply
@@ -105,14 +109,20 @@ public static class Personality
     """;
 
     public const string Commands = """
-    You may run a program with run_command when the user asks. Pass the program name and a list of arguments. Do not use cmd, PowerShell, or one long command string. The user is asked before it runs, unless that exact command is already allowed. It runs only in the command folder they chose.
+    You may run a program with run_command when the user asks. Pass the program name and a list of arguments, never one shell line. The user sees the program and its risk before it runs. Low risk can run while this is on. If you are told a command is forbidden, tell the user and do not look for another way to run it.
     """;
+
+    public const string CommandsOff = "Let him run commands is off.";
+    public const string MediumOff = "Medium-risk commands are off.";
+    public const string MediumOn = "Medium-risk commands are on. They can change files or use the network, and the user has allowed that risk.";
+    public const string HighOff = "High-risk commands are off.";
+    public const string HighOn = "High-risk commands are on. They can install, stop a program, or make a hard-to-undo change, and the user has allowed that risk.";
 
     public const string Spoken = """
     Speech is turned on. You speak your reply aloud to the user. In the final reply, wrap the words to be spoken in [[spoken]] and [[/spoken]], for example: [[spoken]]Hello mate![[/spoken]]. One short spoken answer, under fifteen words, the actual answer. The bubble shows the whole reply. Words outside those marks are not spoken. Leave the marks out while you are still calling tools. Do not put tool names, screen text, or a plan inside the marks.
     """;
 
-    public static string Instructions(bool computerControl, bool speakAloud = false, bool noTouch = false, string? memoryNote = null, bool commands = false)
+    public static string Instructions(bool computerControl, bool speakAloud = false, bool noTouch = false, string? memoryNote = null, bool commands = false, bool commandsMedium = false, bool commandsHigh = false, bool learn = false, bool learnQuiet = false)
     {
         var basePrompt = speakAloud
             ? Base.Replace(
@@ -122,9 +132,21 @@ public static class Personality
         var text = basePrompt;
         if (noTouch) text += "\n\n" + NoTouchMode;
         else if (computerControl) text += "\n\n" + ScreenActions + "\n\n" + Computer + "\n\nNo-touch is off.";
-        else text += "\n\nNo-touch is off. Look and point.";
-        if (commands && !noTouch) text += "\n\n" + Commands;
+        else text += "\n\nNo-touch is off. Let him use the computer is off. Look and point.";
+        if (!noTouch && commands)
+        {
+            text += "\n\n" + Commands;
+            text += "\n" + (commandsMedium ? MediumOn : MediumOff);
+            text += "\n" + (commandsHigh ? HighOn : HighOff);
+        }
+        else if (!noTouch)
+        {
+            text += "\n\n" + CommandsOff;
+        }
+        if (!learn) text += "\n\nLearn about me is off.";
+        else if (learnQuiet) text += "\n\nLearn about me is paused.";
         if (speakAloud) text += "\n\n" + Spoken;
+        else text += "\n\nSpeak replies is off.";
         if (!string.IsNullOrWhiteSpace(memoryNote)) text += "\n\n" + memoryNote.Trim();
         return text;
     }
@@ -175,8 +197,8 @@ public static class ToolCatalog
 
     private static readonly (string Name, string Description, string Parameters) CommandTool =
         ("run_command",
-            "Run a program by name with a list of arguments. Do not pass a shell command. The user is asked first unless this exact command is already allowed.",
-            """{"type":"object","properties":{"program":{"type":"string","description":"Program name, like git or dotnet. Not cmd or powershell."},"args":{"type":"array","items":{"type":"string"},"description":"Arguments as separate words."}},"required":["program"]}""");
+            "Run a program by name with a list of arguments. Do not pass a shell line. The user is asked first and sees the risk.",
+            """{"type":"object","properties":{"program":{"type":"string","description":"Program name, such as git."},"args":{"type":"array","items":{"type":"string"},"description":"Arguments as separate words."},"folder":{"type":"string","description":"Folder to run in. Leave it out to use the user profile."}},"required":["program"]}""");
 
     public static List<Dictionary<string, object>> OpenAiTools(bool computerControl, bool noTouch = false, bool commands = false)
     {
@@ -501,7 +523,7 @@ public sealed class BrainClient
     {
         var session = new Dictionary<string, object?>
         {
-            ["instructions"] = Personality.Instructions(settings.ComputerControl, noTouch: settings.NoTouch, memoryNote: LiveMemoryNote?.Invoke(), commands: settings.Commands),
+            ["instructions"] = Personality.Instructions(settings.ComputerControl, noTouch: settings.NoTouch, memoryNote: LiveMemoryNote?.Invoke(), commands: settings.Commands, commandsMedium: settings.CommandsMedium, commandsHigh: settings.CommandsHigh, learn: settings.Learn, learnQuiet: settings.LearnQuiet),
             ["tools"] = ToolCatalog.OpenAiTools(settings.ComputerControl, settings.NoTouch, settings.Commands),
             ["tool_choice"] = "auto",
         };
@@ -600,7 +622,7 @@ public sealed class BrainClient
             ["model"] = model,
             ["store"] = false,
             ["stream"] = true,
-            ["instructions"] = Personality.Instructions(ask.ComputerControl, ask.SpeakAloud, ask.NoTouch, ask.MemoryNote, ask.Commands),
+            ["instructions"] = Personality.Instructions(ask.ComputerControl, ask.SpeakAloud, ask.NoTouch, ask.MemoryNote, ask.Commands, ask.CommandsMedium, ask.CommandsHigh, ask.Learn, ask.LearnQuiet),
             ["tools"] = ToolCatalog.OpenAiTools(ask.ComputerControl, ask.NoTouch, ask.Commands),
             ["input"] = input,
         };
@@ -724,7 +746,7 @@ public sealed class BrainClient
         {
             ["model"] = settings.AnthropicModel,
             ["max_tokens"] = 1024,
-            ["system"] = Personality.Instructions(ask.ComputerControl, ask.SpeakAloud, ask.NoTouch, ask.MemoryNote, ask.Commands),
+            ["system"] = Personality.Instructions(ask.ComputerControl, ask.SpeakAloud, ask.NoTouch, ask.MemoryNote, ask.Commands, ask.CommandsMedium, ask.CommandsHigh, ask.Learn, ask.LearnQuiet),
             ["tools"] = ToolCatalog.AnthropicTools(ask.ComputerControl, ask.NoTouch, ask.Commands),
             ["messages"] = messages,
         };
@@ -778,7 +800,7 @@ public sealed class BrainClient
             throw new InvalidOperationException(route.MissingKey);
         var messages = new List<object>
         {
-            new Dictionary<string, object> { ["role"] = "system", ["content"] = Personality.Instructions(ask.ComputerControl, ask.SpeakAloud, ask.NoTouch, ask.MemoryNote, ask.Commands) },
+            new Dictionary<string, object> { ["role"] = "system", ["content"] = Personality.Instructions(ask.ComputerControl, ask.SpeakAloud, ask.NoTouch, ask.MemoryNote, ask.Commands, ask.CommandsMedium, ask.CommandsHigh, ask.Learn, ask.LearnQuiet) },
         };
         var recent = RecentTurns(ask);
         var pictured = PictureTurn(ask, recent, out var carried);

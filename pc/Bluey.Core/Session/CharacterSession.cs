@@ -169,6 +169,8 @@ public sealed class CharacterSession
             learnTell = settings.LearnTell,
             learnQuiet = settings.LearnQuiet,
             commands = settings.Commands,
+            commandsMedium = settings.CommandsMedium,
+            commandsHigh = settings.CommandsHigh,
         });
     }
 
@@ -331,6 +333,10 @@ public sealed class CharacterSession
                     SpeakAloud = _speaker?.Enabled == true,
                     MemoryNote = memoryNote,
                     Commands = settings.Commands,
+                    CommandsMedium = settings.CommandsMedium,
+                    CommandsHigh = settings.CommandsHigh,
+                    Learn = settings.Learn,
+                    LearnQuiet = settings.LearnQuiet,
                 }, cancellationToken);
                 if (!string.IsNullOrWhiteSpace(reply.Text))
                 {
@@ -673,7 +679,7 @@ public sealed class CharacterSession
     {
         var settings = _brains.Settings;
         var helper = AllowCommands != null && !AllowCommands();
-        var decision = CommandRules.Decide(_commands.Load(), arguments, settings.Commands, settings.NoTouch, DateTimeOffset.UtcNow < StoppedUntil, helper);
+        var decision = CommandRules.Decide(_commands.Load(), arguments, settings.Commands, settings.CommandsMedium, settings.CommandsHigh, settings.NoTouch, DateTimeOffset.UtcNow < StoppedUntil, helper);
         if (!decision.Ask && !decision.RunNow) return new ToolRun { Text = decision.Reason, Ok = false };
         var proposal = decision.Proposal!;
         if (decision.Ask)

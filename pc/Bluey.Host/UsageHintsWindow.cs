@@ -193,9 +193,9 @@ public sealed class UsageHintsWindow : Window
         ("Commands", new[]
         {
             "Let him run commands is off until you turn it on. It is separate from Let him use the computer.",
-            "Pick Command folder… first. He asks before each new program, on the PC and on the phone.",
-            "Run once is only this time. Always allow saves that exact program, those arguments, and that folder.",
-            "He will not run a shell. No answer counts as no. One yes does not become a habit.",
+            "He asks before each program and shows low, medium, or high risk. Medium and high stay off until you allow them.",
+            "Run once is only this time. Always allow saves that exact command.",
+            "Commands that can wipe the disk, startup, accounts, or the firewall are refused. No answer counts as no.",
         }),
         ("The tray", new[]
         {

@@ -108,6 +108,8 @@ data class Ui(
     val memoryOpen: Boolean = false,
     val memoryBody: String = "",
     val commands: Boolean = false,
+    val commandsMedium: Boolean = false,
+    val commandsHigh: Boolean = false,
     val commandAsk: String = "",
 )
 
@@ -140,8 +142,11 @@ fun BlueyScreen(
     onLearnTell: (Boolean) -> Unit = {},
     onMemoryOpen: () -> Unit = {},
     onCommands: (Boolean) -> Unit = {},
+    onCommandsMedium: (Boolean) -> Unit = {},
+    onCommandsHigh: (Boolean) -> Unit = {},
 ) {
     var typingOpen by remember { mutableStateOf(false) }
+    var settingsOpen by remember { mutableStateOf(false) }
     var soundSettingsOpen by remember { mutableStateOf(false) }
     var draft by remember { mutableStateOf("") }
     val bubble = when {
@@ -205,6 +210,17 @@ fun BlueyScreen(
             fontSize = 13.sp,
         )
         HoldButton(ui = ui, onHoldStart = onHoldStart, onHoldEnd = onHoldEnd)
+        Button(onClick = { settingsOpen = !settingsOpen }, modifier = Modifier.fillMaxWidth()) {
+            Text(if (settingsOpen) "Hide settings" else "Settings")
+        }
+        if (settingsOpen) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f)
+                .verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
         if (ui.connected) {
             Row(
                 modifier = Modifier
@@ -289,12 +305,48 @@ fun BlueyScreen(
                 Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
                     Text("Let him run commands", color = Color.White, fontSize = 15.sp)
                     Text(
-                        "Off until you turn it on. He asks here before a program runs. Pick the folder on the PC.",
+                        "Off until you turn it on. He asks here and shows the risk.",
                         color = Color(0xFFB9B2CC),
                         fontSize = 12.sp,
                     )
                 }
                 Switch(checked = ui.commands, onCheckedChange = onCommands)
+            }
+            if (ui.commands) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(Color(0xFF1E1B2E), RoundedCornerShape(12.dp))
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
+                        Text("Allow medium-risk commands", color = Color.White, fontSize = 15.sp)
+                        Text(
+                            "These can change files or use the network.",
+                            color = Color(0xFFB9B2CC),
+                            fontSize = 12.sp,
+                        )
+                    }
+                    Switch(checked = ui.commandsMedium, onCheckedChange = onCommandsMedium)
+                }
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(Color(0xFF1E1B2E), RoundedCornerShape(12.dp))
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
+                        Text("Allow high-risk commands", color = Color.White, fontSize = 15.sp)
+                        Text(
+                            "These can install, stop a program, or be hard to undo.",
+                            color = Color(0xFFB9B2CC),
+                            fontSize = 12.sp,
+                        )
+                    }
+                    Switch(checked = ui.commandsHigh, onCheckedChange = onCommandsHigh)
+                }
             }
         }
         if (ui.awake) {
@@ -476,8 +528,18 @@ fun BlueyScreen(
                 }
             }
         }
+        }
+        }
     }
 }
+
+private data class CommandAskParts(
+    val display: String,
+    val folder: String,
+    val args: List<String>,
+    val risk: String,
+    val note: String,
+)
 
 @Composable
 fun CommandAskScreen(body: String, onChoice: (String) -> Unit) {
@@ -489,9 +551,15 @@ fun CommandAskScreen(body: String, onChoice: (String) -> Unit) {
             if (args != null) {
                 for (index in 0 until args.length()) words.add(args.optString(index))
             }
-            Triple(doc.optString("display", doc.optString("program")), doc.optString("folder"), words.toList())
+            CommandAskParts(
+                doc.optString("display", doc.optString("program")),
+                doc.optString("folder"),
+                words.toList(),
+                doc.optString("risk", "Low"),
+                doc.optString("note"),
+            )
         } catch (_: Exception) {
-            Triple(body, "", emptyList<String>())
+            CommandAskParts(body, "", emptyList(), "", "")
         }
     }
     androidx.activity.compose.BackHandler { onChoice("no") }
@@ -504,15 +572,21 @@ fun CommandAskScreen(body: String, onChoice: (String) -> Unit) {
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Text("Run this program?", color = Color.White, fontSize = 22.sp)
-        Text(parsed.first.ifBlank { "A program" }, color = Color.White, fontSize = 18.sp)
-        Text("Folder", color = Color(0xFFB9B2CC), fontSize = 13.sp)
-        Text(parsed.second.ifBlank { "No folder" }, color = Color.White, fontSize = 15.sp)
-        if (parsed.third.isNotEmpty()) {
+        Text(parsed.display.ifBlank { "A program" }, color = Color.White, fontSize = 18.sp)
+        if (parsed.risk.isNotBlank()) {
+            Text(parsed.risk + " risk", color = Color.White, fontSize = 18.sp)
+        }
+        if (parsed.note.isNotBlank()) {
+            Text(parsed.note, color = Color(0xFFB9B2CC), fontSize = 14.sp)
+        }
+        Text("Runs in", color = Color(0xFFB9B2CC), fontSize = 13.sp)
+        Text(parsed.folder.ifBlank { "Your profile" }, color = Color.White, fontSize = 15.sp)
+        if (parsed.args.isNotEmpty()) {
             Text("Arguments", color = Color(0xFFB9B2CC), fontSize = 13.sp)
-            parsed.third.forEach { word -> Text(word, color = Color.White, fontSize = 15.sp) }
+            parsed.args.forEach { word -> Text(word, color = Color.White, fontSize = 15.sp) }
         }
         Text(
-            "Run once does it this time. Always allow saves this exact program, these arguments, and this folder. No answer counts as no.",
+            "Run once does it this time. Always allow saves this exact command. No answer counts as no.",
             color = Color(0xFFB9B2CC),
             fontSize = 13.sp,
         )

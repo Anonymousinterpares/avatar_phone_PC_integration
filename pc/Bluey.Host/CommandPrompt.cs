@@ -30,6 +30,8 @@ public sealed class CommandPrompt
             args = proposal.Args,
             folder = proposal.Folder,
             display = proposal.Display,
+            risk = proposal.Risk,
+            note = proposal.RiskNote,
         });
         await _phones.BroadcastAsync(Packet.Of("commandAsk", body));
         Show(id, proposal);
@@ -102,14 +104,16 @@ public sealed class CommandPrompt
         };
         var root = new StackPanel { Margin = new Thickness(16) };
         root.Children.Add(Line(proposal.Display, 16, bold: true));
-        root.Children.Add(Line("Folder", 13, bold: true));
+        root.Children.Add(Line(proposal.Risk + " risk", 16, bold: true));
+        root.Children.Add(Line(proposal.RiskNote, 13, bold: false));
+        root.Children.Add(Line("Runs in", 13, bold: true));
         root.Children.Add(Line(proposal.Folder, 13, bold: false));
         if (proposal.Args.Length > 0)
         {
             root.Children.Add(Line("Arguments", 13, bold: true));
             foreach (var arg in proposal.Args) root.Children.Add(Line(arg, 13, bold: false));
         }
-        root.Children.Add(Line("Run once does it this time. Always allow saves this exact program, these arguments, and this folder.", 12, bold: false));
+        root.Children.Add(Line("Run once does it this time. Always allow saves this exact command. No answer counts as no.", 12, bold: false));
         var row = new StackPanel { Orientation = System.Windows.Controls.Orientation.Horizontal, HorizontalAlignment = System.Windows.HorizontalAlignment.Right, Margin = new Thickness(0, 12, 0, 0) };
         row.Children.Add(MakeButton("Run once", () => Finish(id, CommandChoice.Once)));
         row.Children.Add(MakeButton("Always allow", () => Finish(id, CommandChoice.Always)));

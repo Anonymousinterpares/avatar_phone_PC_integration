@@ -175,9 +175,11 @@ While it is on, he keeps one memory file for you on this computer and loads that
 
 This is off until you turn it on. It is separate from **Let him use the computer**. Right-click the Bluey icon and check **Let him run commands**. The same switch is on the phone, and on a right-click of the blueberry.
 
-Choose **Command folder…** before the first run. He will not use a whole drive, and he will not run until that folder is set. Ask him to run a program by name, such as git, with its arguments as separate words. He shows the program, the arguments, and the folder on the computer and on the phone. **Run once** does it this time. **Always allow** saves that exact line so the next identical one can run on its own. **No**, or no answer, does nothing. One yes does not become a habit.
+Ask him to run a program by name, such as git, with its arguments as separate words. He shows the program, the risk, and where it will run, on the computer and on the phone. **Run once** does it this time. **Always allow** saves that exact line so the next identical one can run on its own. **No**, or no answer, does nothing. One yes does not become a habit.
 
-He will not open cmd or PowerShell, and he will not read passwords, keys, or his own settings. A run is written only on this computer. **Ctrl+Alt+S** stops him and stops a program he started. **No touch** blocks it. Turn the switch on before a live voice call if you want it during that call.
+Low risk can run while the main switch is on. **Allow medium-risk commands** and **Allow high-risk commands** are separate, and both start off. Medium risk can change files or use the network. High risk can install software, stop a program, or make a change that is hard to undo. He tells you the risk before anything runs.
+
+Some commands are refused no matter what those switches say. That includes anything that can wipe a disk, change how the computer starts, change accounts, or turn off the firewall, and anything that reads passwords, keys, or his own settings. He cannot be talked into running one. A run that is allowed is written only on this computer. **Ctrl+Alt+S** stops him and stops a program he started. **No touch** blocks it. Turn the switch on before a live voice call if you want it during that call.
 
 ## 7. Open the computer screen on the phone
 

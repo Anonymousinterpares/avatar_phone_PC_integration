@@ -222,7 +222,9 @@ class MainActivity : ComponentActivity() {
                     onLearnQuiet = { setLearn(ui.learn, ui.learnTell, it) },
                     onLearnTell = { setLearn(ui.learn, it, ui.learnQuiet) },
                     onMemoryOpen = { openMemory() },
-                    onCommands = { setCommands(it) },
+                    onCommands = { setCommandFlags(it, ui.commandsMedium, ui.commandsHigh) },
+                    onCommandsMedium = { setCommandFlags(ui.commands, it, ui.commandsHigh) },
+                    onCommandsHigh = { setCommandFlags(ui.commands, ui.commandsMedium, it) },
                 )
             }
         }
@@ -556,6 +558,8 @@ class MainActivity : ComponentActivity() {
             learnTell = session.optBoolean("learnTell"),
             learnQuiet = session.optBoolean("learnQuiet"),
             commands = session.optBoolean("commands"),
+            commandsMedium = session.optBoolean("commandsMedium"),
+            commandsHigh = session.optBoolean("commandsHigh"),
         )
         if (!ui.awake) return
         if (realtime) startMic() else stopMic()
@@ -917,11 +921,17 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun setCommands(enabled: Boolean) {
-        ui = ui.copy(commands = enabled)
+    private fun setCommandFlags(commands: Boolean, medium: Boolean, high: Boolean) {
+        ui = ui.copy(commands = commands, commandsMedium = medium, commandsHigh = high)
         if (!link.connected) return
         work.execute {
-            try { link.send("commands", if (enabled) "true" else "false") } catch (_: Exception) { }
+            try {
+                val flags = JSONObject()
+                flags.put("commands", commands)
+                flags.put("medium", medium)
+                flags.put("high", high)
+                link.send("commands", flags.toString())
+            } catch (_: Exception) { }
         }
     }
 

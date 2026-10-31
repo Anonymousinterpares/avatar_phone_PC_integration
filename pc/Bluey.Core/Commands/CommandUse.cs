@@ -31,6 +31,16 @@ public sealed class CommandProposal
     public string[] Args { get; init; } = Array.Empty<string>();
     public string Folder { get; init; } = "";
     public string Display { get; init; } = "";
+    public string Risk { get; init; } = "Low";
+    public string RiskNote { get; init; } = "";
+}
+
+public enum CommandRisk
+{
+    Low,
+    Medium,
+    High,
+    Forbidden,
 }
 
 public sealed class CommandDecision
@@ -164,12 +174,31 @@ public static class CommandRules
     public const int TimeoutSeconds = 20;
     public const int OutputCap = 8000;
 
-    private static readonly string[] Shells =
+    private static readonly string[] ForbiddenPrograms =
     {
-        "cmd", "powershell", "pwsh", "bash", "wsl", "wscript", "cscript", "mshta",
-        "reg", "regedit", "diskpart", "format", "cipher", "bcdedit", "shutdown",
-        "sc", "net", "bitsadmin", "certutil", "rundll32", "msiexec", "conhost", "wt", "powershell_ise",
+        "cmd", "powershell", "pwsh", "powershell_ise", "bash", "sh", "wsl", "wscript", "cscript", "mshta",
+        "conhost", "wt", "cmdkey",
+        "format", "diskpart", "cipher", "bcdedit", "bcdboot", "bootsect", "bootrec", "reagentc",
+        "vssadmin", "wbadmin", "sdelete", "fsutil", "dism",
+        "reg", "regedit", "regini", "rundll32", "regsvr32", "certutil", "bitsadmin", "msiexec", "wmic", "msbuild",
+        "shutdown", "sc", "net", "net1", "netsh", "takeown", "icacls", "cacls",
+        "del", "erase", "rd", "rmdir", "rm",
     };
+
+    private static readonly string[] HighPrograms =
+    {
+        "taskkill", "tskill", "schtasks", "attrib", "subst", "mountvol", "sfc", "chkdsk",
+        "python", "python3", "py", "pyw", "node", "npm", "npx", "pip", "pip3",
+        "ruby", "perl", "php", "winget", "choco", "scoop", "dotnet", "cargo", "java", "javac",
+    };
+
+    private static readonly string[] LowPrograms =
+    {
+        "where", "whoami", "hostname", "ipconfig", "ping", "systeminfo", "tasklist", "driverquery",
+        "getmac", "tracert", "nslookup", "arp", "netstat", "pathping",
+    };
+
+    private static readonly string[] CodeExecPrograms = { "python", "python3", "py", "pyw", "node", "ruby", "perl", "php" };
 
     private static readonly string[] Secrets =
     {
@@ -207,32 +236,53 @@ public static class CommandRules
         return true;
     }
 
-    public static CommandDecision Decide(CommandFile file, string argumentsJson, bool enabled, bool noTouch, bool stopped, bool helper)
+    public static CommandDecision Decide(CommandFile file, string argumentsJson, bool enabled, bool medium, bool high, bool noTouch, bool stopped, bool helper)
     {
         if (!enabled) return CommandDecision.Refuse("Let him run commands is off.");
         if (helper) return CommandDecision.Refuse("A help session cannot run commands.");
         if (noTouch) return CommandDecision.Refuse("No-touch mode is on, so I can't do that.");
         if (stopped) return CommandDecision.Refuse("Stopped.");
-        if (!FolderIsUsable(file.Folder, out var folderReason)) return CommandDecision.Refuse(folderReason);
-        if (!TryRead(argumentsJson, out var program, out var args, out var readReason)) return CommandDecision.Refuse(readReason);
-        if (IsShell(program) || HasSecret(program) || program.Contains("..", StringComparison.Ordinal))
-            return CommandDecision.Refuse("I won't run a shell or a command that reaches into private files.");
-        foreach (var arg in args)
-        {
-            if (arg.Contains("..", StringComparison.Ordinal) || HasSecret(arg) || Escapes(arg, file.Folder))
-                return CommandDecision.Refuse("That stays outside the command folder, so I won't run it.");
-        }
+        if (!TryRead(argumentsJson, out var program, out var args, out var folderRequest, out var readReason)) return CommandDecision.Refuse(readReason);
+        var risk = Classify(program, args);
+        if (risk == CommandRisk.Forbidden) return CommandDecision.Refuse("That command is forbidden.");
+        if (!TryFolder(folderRequest, out var folder, out var folderReason)) return CommandDecision.Refuse(folderReason);
+        if (risk == CommandRisk.High && !high) return CommandDecision.Refuse("That is a high-risk command, and high-risk commands are off.");
+        if (risk == CommandRisk.Medium && !medium) return CommandDecision.Refuse("That is a medium-risk command, and medium-risk commands are off.");
         var proposal = new CommandProposal
         {
             Program = program,
             ProgramName = ProgramName(program),
             Args = args,
-            Folder = Path.GetFullPath(file.Folder),
+            Folder = folder,
             Display = Display(program, args),
+            Risk = risk.ToString(),
+            RiskNote = RiskNote(risk),
         };
         if (file.Allow.Any(item => Same(item, proposal))) return CommandDecision.Allowed(proposal);
         return CommandDecision.NeedsAsk(proposal);
     }
+
+    public static CommandRisk Classify(string program, string[] args)
+    {
+        if (IsForbiddenProgram(program) || HasSecret(program) || program.Contains("..", StringComparison.Ordinal))
+            return CommandRisk.Forbidden;
+        foreach (var arg in args)
+        {
+            if (arg.Contains("..", StringComparison.Ordinal) || HasSecret(arg) || IsDriveRoot(arg))
+                return CommandRisk.Forbidden;
+        }
+        if (HasCodeExec(program, args) || IsGitDestructive(program, args) || HasForbiddenToken(args))
+            return CommandRisk.Forbidden;
+        var risk = BaseRisk(program, args);
+        return Raise(risk, args);
+    }
+
+    public static string RiskNote(CommandRisk risk) => risk switch
+    {
+        CommandRisk.High => "High risk. This can install software, stop a program, or make a change that is hard to undo.",
+        CommandRisk.Medium => "Medium risk. This can change files or use the network.",
+        _ => "Low risk. This looks things up or makes no lasting change.",
+    };
 
     public static bool Same(AllowedCommand item, CommandProposal proposal)
     {
@@ -247,7 +297,7 @@ public static class CommandRules
     public static string? Resolve(string program)
     {
         var name = ProgramName(program);
-        if (IsShell(name)) return null;
+        if (IsForbiddenProgram(name)) return null;
         if (program.Contains('\\') || program.Contains('/'))
         {
             if (!File.Exists(program) || HasSecret(program)) return null;
@@ -269,10 +319,11 @@ public static class CommandRules
         return name + ".exe";
     }
 
-    private static bool TryRead(string json, out string program, out string[] args, out string reason)
+    private static bool TryRead(string json, out string program, out string[] args, out string? folder, out string reason)
     {
         program = "";
         args = Array.Empty<string>();
+        folder = null;
         reason = "";
         try
         {
@@ -289,6 +340,8 @@ public static class CommandRules
                 reason = "Name the program, and pass arguments as a list.";
                 return false;
             }
+            if (root.TryGetProperty("folder", out var folderValue) && folderValue.ValueKind == JsonValueKind.String)
+                folder = folderValue.GetString();
             if (!root.TryGetProperty("args", out var argsValue))
             {
                 args = Array.Empty<string>();
@@ -335,10 +388,141 @@ public static class CommandRules
         }
     }
 
-    private static bool IsShell(string program)
+    private static bool IsForbiddenProgram(string program)
     {
-        var name = ProgramName(program);
-        return Shells.Any(shell => string.Equals(ProgramName(shell), name, StringComparison.OrdinalIgnoreCase));
+        return ForbiddenPrograms.Any(name => IsName(program, name));
+    }
+
+    private static bool IsName(string program, string expected)
+    {
+        return string.Equals(ProgramName(program), ProgramName(expected), StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static CommandRisk BaseRisk(string program, string[] args)
+    {
+        if (IsName(program, "git")) return GitRisk(args);
+        if (HighPrograms.Any(name => IsName(program, name))) return CommandRisk.High;
+        if (LowPrograms.Any(name => IsName(program, name))) return CommandRisk.Low;
+        return CommandRisk.Medium;
+    }
+
+    private static CommandRisk GitRisk(string[] args)
+    {
+        var sub = FirstWord(args);
+        if (sub is "status" or "diff" or "log" or "show" or "rev-parse" or "blame" or "describe" or "shortlog" or "help" or "version" or "")
+            return CommandRisk.Low;
+        if (sub == "remote" && !args.Any(arg => arg is "remove" or "add" or "set-url" or "rename")) return CommandRisk.Low;
+        if (sub == "branch" && !args.Any(arg => arg is "-d" or "-D" or "--delete")) return CommandRisk.Low;
+        if (sub is "reset" or "rebase" || (sub == "push" && args.Any(arg => arg is "--force" or "--force-with-lease" or "-f")))
+            return CommandRisk.High;
+        if (sub == "branch") return CommandRisk.High;
+        return CommandRisk.Medium;
+    }
+
+    private static string FirstWord(string[] args)
+    {
+        for (var i = 0; i < args.Length; i++)
+        {
+            var arg = args[i];
+            if (arg.StartsWith('-'))
+            {
+                if (arg is "-C" or "-c" or "--git-dir" or "--work-tree") i++;
+                continue;
+            }
+            return arg.ToLowerInvariant();
+        }
+        return "";
+    }
+
+    private static bool IsGitDestructive(string program, string[] args)
+    {
+        if (!IsName(program, "git")) return false;
+        var sub = FirstWord(args);
+        if (sub is "clean" or "filter-branch" or "filter-repo") return true;
+        return sub == "reset" && args.Any(arg => arg.Equals("--hard", StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static bool HasCodeExec(string program, string[] args)
+    {
+        if (!CodeExecPrograms.Any(name => IsName(program, name))) return false;
+        return args.Any(arg => arg is "-c" or "-e" or "--eval" or "-r");
+    }
+
+    private static bool HasForbiddenToken(string[] args)
+    {
+        foreach (var arg in args)
+        {
+            if (arg.Equals("--hard", StringComparison.OrdinalIgnoreCase) || arg.Equals("/mir", StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+        return false;
+    }
+
+    private static CommandRisk Raise(CommandRisk risk, string[] args)
+    {
+        foreach (var arg in args)
+        {
+            if (arg.Equals("--force", StringComparison.OrdinalIgnoreCase)
+                || arg.Equals("--force-with-lease", StringComparison.OrdinalIgnoreCase)
+                || arg.Equals("-rf", StringComparison.OrdinalIgnoreCase)
+                || arg.Equals("-fr", StringComparison.OrdinalIgnoreCase)
+                || arg.Equals("/f", StringComparison.OrdinalIgnoreCase)
+                || arg.Equals("delete", StringComparison.OrdinalIgnoreCase)
+                || arg.Equals("remove", StringComparison.OrdinalIgnoreCase)
+                || arg.Equals("uninstall", StringComparison.OrdinalIgnoreCase))
+                return CommandRisk.High;
+        }
+        return risk;
+    }
+
+    private static bool TryFolder(string? requested, out string full, out string reason)
+    {
+        full = "";
+        reason = "";
+        var chosen = string.IsNullOrWhiteSpace(requested)
+            ? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile)
+            : requested;
+        if (string.IsNullOrWhiteSpace(chosen) || !Directory.Exists(chosen))
+        {
+            reason = "That folder cannot be used.";
+            return false;
+        }
+        try
+        {
+            full = Path.GetFullPath(chosen);
+            if (IsDriveRoot(full))
+            {
+                reason = "That folder cannot be used.";
+                return false;
+            }
+        }
+        catch (Exception)
+        {
+            reason = "That folder cannot be used.";
+            return false;
+        }
+        if (HasSecret(full))
+        {
+            reason = "That command is forbidden.";
+            return false;
+        }
+        return true;
+    }
+
+    private static bool IsDriveRoot(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path)) return false;
+        try
+        {
+            var full = Path.GetFullPath(path);
+            var root = Path.GetPathRoot(full);
+            if (string.IsNullOrEmpty(root)) return false;
+            return string.Equals(full.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar), root.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar), StringComparison.OrdinalIgnoreCase);
+        }
+        catch (Exception)
+        {
+            return false;
+        }
     }
 
     private static bool HasSecret(string text)
@@ -346,23 +530,6 @@ public static class CommandRules
         foreach (var secret in Secrets)
             if (text.Contains(secret, StringComparison.OrdinalIgnoreCase)) return true;
         return false;
-    }
-
-    private static bool Escapes(string arg, string folder)
-    {
-        var absolute = arg.StartsWith("\\\\", StringComparison.Ordinal)
-            || (arg.Length >= 3 && char.IsLetter(arg[0]) && arg[1] == ':' && (arg[2] == '\\' || arg[2] == '/'));
-        if (!absolute) return false;
-        try
-        {
-            var full = Path.GetFullPath(arg);
-            var root = Path.GetFullPath(folder).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
-            return !full.StartsWith(root, StringComparison.OrdinalIgnoreCase);
-        }
-        catch (Exception)
-        {
-            return true;
-        }
     }
 
     private static string Display(string program, string[] args)
@@ -395,6 +562,11 @@ public sealed class CommandRunner
     public string Run(CommandProposal proposal, CancellationToken cancellationToken)
     {
         Interlocked.Exchange(ref _killed, 0);
+        if (CommandRules.Classify(proposal.Program, proposal.Args) == CommandRisk.Forbidden)
+        {
+            _store.Log(proposal.Display + "  forbidden");
+            return "That command is forbidden.";
+        }
         var exe = CommandRules.Resolve(proposal.Program);
         if (exe == null)
         {

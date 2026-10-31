@@ -38,6 +38,8 @@ public sealed class TrayApp : IDisposable
     private ToolStripMenuItem _quietItem = null!;
     private ToolStripMenuItem _tellItem = null!;
     private ToolStripMenuItem _commandsItem = null!;
+    private ToolStripMenuItem _commandsMediumItem = null!;
+    private ToolStripMenuItem _commandsHighItem = null!;
 
     private readonly Action _allowHelp;
     private readonly Action _helpSomeone;
@@ -101,11 +103,9 @@ public sealed class TrayApp : IDisposable
         };
         _overlay.CommandsToggleRequested += () =>
         {
-            var next = !_settings.Commands;
-            if (next && string.IsNullOrWhiteSpace(_commands.Load().Folder) && !EnsureCommandFolder()) return;
-            _settings.Commands = next;
+            _settings.Commands = !_settings.Commands;
             _store.Save(_settings);
-            ShowCommands(_settings.Commands);
+            ShowCommands(_settings.Commands, _settings.CommandsMedium, _settings.CommandsHigh);
             _ = _phones.BroadcastAsync(Packet.Of("session", _session.SessionJson()));
         };
     }
@@ -228,19 +228,31 @@ public sealed class TrayApp : IDisposable
         _commandsItem.CheckedChanged += (_, _) =>
         {
             if (_commandsItem.Checked == _settings.Commands) return;
-            if (_commandsItem.Checked && string.IsNullOrWhiteSpace(_commands.Load().Folder) && !EnsureCommandFolder())
-            {
-                _commandsItem.Checked = false;
-                return;
-            }
             _settings.Commands = _commandsItem.Checked;
             _store.Save(_settings);
-            ShowCommands(_settings.Commands);
+            ShowCommands(_settings.Commands, _settings.CommandsMedium, _settings.CommandsHigh);
+            _ = _phones.BroadcastAsync(Packet.Of("session", _session.SessionJson()));
+        };
+        _commandsMediumItem = new ToolStripMenuItem("Allow medium-risk commands") { Checked = _settings.CommandsMedium, CheckOnClick = true, Enabled = _settings.Commands };
+        _commandsMediumItem.CheckedChanged += (_, _) =>
+        {
+            if (_commandsMediumItem.Checked == _settings.CommandsMedium) return;
+            _settings.CommandsMedium = _commandsMediumItem.Checked;
+            _store.Save(_settings);
+            _ = _phones.BroadcastAsync(Packet.Of("session", _session.SessionJson()));
+        };
+        _commandsHighItem = new ToolStripMenuItem("Allow high-risk commands") { Checked = _settings.CommandsHigh, CheckOnClick = true, Enabled = _settings.Commands };
+        _commandsHighItem.CheckedChanged += (_, _) =>
+        {
+            if (_commandsHighItem.Checked == _settings.CommandsHigh) return;
+            _settings.CommandsHigh = _commandsHighItem.Checked;
+            _store.Save(_settings);
             _ = _phones.BroadcastAsync(Packet.Of("session", _session.SessionJson()));
         };
         menu.Items.Add(_commandsItem);
-        menu.Items.Add("Command folder…", null, (_, _) => EnsureCommandFolder());
-        menu.Items.Add("Commands he may run…", null, (_, _) => ShowAllowedCommands());
+        menu.Items.Add(_commandsMediumItem);
+        menu.Items.Add(_commandsHighItem);
+        menu.Items.Add("Allowed commands…", null, (_, _) => ShowAllowedCommands());
         var hints = new ToolStripMenuItem("Show usage hints") { Checked = _settings.UsageHints, CheckOnClick = true };
         hints.CheckedChanged += (_, _) =>
         {
@@ -372,27 +384,14 @@ public sealed class TrayApp : IDisposable
         if (_tellItem.Checked != tell) _tellItem.Checked = tell;
     }
 
-    public void ShowCommands(bool enabled)
+    public void ShowCommands(bool enabled, bool medium, bool high)
     {
         _overlay.SetCommands(enabled);
-        if (_commandsItem.Checked == enabled) return;
-        _commandsItem.Checked = enabled;
-    }
-
-    private bool EnsureCommandFolder()
-    {
-        var current = _commands.Load().Folder;
-        using var dialog = new FolderBrowserDialog
-        {
-            Description = "Choose the folder commands may use",
-            UseDescriptionForTitle = true,
-            SelectedPath = Directory.Exists(current) ? current : "",
-        };
-        if (dialog.ShowDialog() != DialogResult.OK) return Directory.Exists(current);
-        var error = _commands.SetFolder(dialog.SelectedPath);
-        if (error == null) return true;
-        MessageBox.Show(error, "Bluey", MessageBoxButtons.OK, MessageBoxIcon.Information);
-        return false;
+        _commandsMediumItem.Enabled = enabled;
+        _commandsHighItem.Enabled = enabled;
+        if (_commandsItem.Checked != enabled) _commandsItem.Checked = enabled;
+        if (_commandsMediumItem.Checked != medium) _commandsMediumItem.Checked = medium;
+        if (_commandsHighItem.Checked != high) _commandsHighItem.Checked = high;
     }
 
     private void ShowAllowedCommands()
@@ -408,7 +407,7 @@ public sealed class TrayApp : IDisposable
             MaximizeBox = false,
         };
         var list = new ListBox { Left = 12, Top = 36, Width = 520, Height = 240 };
-        var empty = new Label { Text = "Nothing is allowed yet. He asks every time.", Left = 12, Top = 12, AutoSize = true };
+        var empty = new Label { Text = "Nothing yet. Always allow puts one command here. Remove it and he asks again.", Left = 12, Top = 12, Width = 520 };
         void Fill()
         {
             list.Items.Clear();
