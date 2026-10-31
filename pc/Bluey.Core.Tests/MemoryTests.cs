@@ -136,6 +136,30 @@ public class MemoryTests
     }
 
     [Fact]
+    public void Startup_loads_the_one_file_and_does_not_invent_an_empty_one()
+    {
+        var folder = Path.Combine(Path.GetTempPath(), "bluey-memory-" + Guid.NewGuid().ToString("N"));
+        var store = new MemoryStore(folder);
+        store.Open();
+        Assert.False(File.Exists(Path.Combine(folder, "memory.json")));
+
+        Directory.CreateDirectory(Path.Combine(folder, "backups"));
+        File.WriteAllText(
+            Path.Combine(folder, "backups", "2026-10-30.json"),
+            "{\"version\":1,\"likes\":[{\"id\":\"l1\",\"text\":\"jazz\",\"use\":\"use\"}]}");
+        var restored = store.Open();
+        Assert.Contains(restored.Likes, like => like.Text == "jazz");
+        Assert.True(File.Exists(Path.Combine(folder, "memory.json")));
+
+        File.WriteAllText(
+            Path.Combine(folder, "memory.json"),
+            "{\"version\":1,\"likes\":[{\"id\":\"l2\",\"text\":\"kept\",\"use\":\"use\"}]}");
+        var kept = store.Open();
+        Assert.Contains(kept.Likes, like => like.Text == "kept");
+        Assert.DoesNotContain(kept.Likes, like => like.Text == "jazz");
+    }
+
+    [Fact]
     public void The_prompt_note_is_appended_only_when_there_is_one()
     {
         var plain = Bluey.Brains.Personality.Instructions(true);

@@ -165,7 +165,7 @@ If the connection drops, the helper window tries again for 2 minutes. A new code
 
 This is off until you turn it on. Right-click the Bluey icon and check **Learn about me**. The same switch is on the phone, and on a right-click of the blueberry.
 
-While it is on, he can learn that "play me some music" means open Spotify, and what you like. Say "remember that…", "don't remember…", "forget that", or "what do you remember". You can also open **What he remembers** on the phone, or **What he remembers…** on the computer, and change or delete each line.
+While it is on, he keeps one memory file for you on this computer and loads that same file each time he starts. He does not start a new empty file. If the file is missing, he puts the newest backup back in its place. He can learn that "play me some music" means open Spotify, and what you like. Say "remember that…", "don't remember…", "forget that", or "what do you remember". You can also open **What he remembers** on the phone, or **What he remembers…** on the computer, and change or delete each line.
 
 **Quiet for now** pauses it without deleting anything. **Also tell the answer service** is separate. Leave that off if you want the list to stay on this computer. He still will not open or click anything while **No touch** is on.
 

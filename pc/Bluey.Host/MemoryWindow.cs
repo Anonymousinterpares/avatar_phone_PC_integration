@@ -66,7 +66,10 @@ internal sealed class MemoryWindow : Form
             return;
         }
         if (_memory.Unreadable) _status.Text = "The memory file could not be read. Load a copy.";
-        else if (book.Habits.Count + book.Likes.Count + book.Never.Count == 0) _status.Text = "Nothing yet.";
+        else if (book.Habits.Count + book.Likes.Count + book.Never.Count == 0 && book.Observations.Count == 0)
+            _status.Text = File.Exists(Path.Combine(_memory.Folder, "memory.json"))
+                ? "The memory file is loaded. Nothing is in it yet."
+                : "No memory file yet. One file is kept when he learns something.";
         else _status.Text = "";
         foreach (var habit in book.Habits)
             AddRow(habit.Id, "When you ask to " + habit.When + ", " + habit.Do + ".", UseLabel(habit.Strength), habit.Source == "repeated" ? "It happened 3 times" : "You said it");
@@ -74,6 +77,11 @@ internal sealed class MemoryWindow : Form
             AddRow(like.Id, like.Text, UseLabel(like.Use), "You said it");
         foreach (var topic in book.Never)
             AddRow(UserMemory.IdFor("never", topic), "Don't remember " + topic + ".", "Don't remember", "You said it");
+        foreach (var heard in book.Observations)
+        {
+            var times = heard.Count == 1 ? "1 time" : heard.Count + " times";
+            AddRow("heard:" + heard.Phrase, "Heard \"" + heard.Phrase + "\" " + times + ". Not a habit yet.", "Heard", "It happened " + times);
+        }
         var selected = _copies.SelectedItem as string;
         _copies.Items.Clear();
         foreach (var copy in _memory.Backups())

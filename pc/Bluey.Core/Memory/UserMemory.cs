@@ -301,9 +301,14 @@ public static class UserMemory
             return true;
         }
         var topic = book.Never.FirstOrDefault(item => IdFor("never", item) == id);
-        if (topic == null) return false;
-        book.Never.Remove(topic);
-        return true;
+        if (topic != null)
+        {
+            book.Never.Remove(topic);
+            return true;
+        }
+        if (!id.StartsWith("heard:", StringComparison.Ordinal)) return false;
+        var phrase = id["heard:".Length..];
+        return book.Observations.RemoveAll(item => item.Phrase == phrase) > 0;
     }
 
     public static void ForgetEverything(MemoryBook book)

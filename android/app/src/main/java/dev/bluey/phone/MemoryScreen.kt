@@ -59,7 +59,12 @@ fun MemoryScreen(
         }
         if (note.isNotEmpty()) Text(note, color = Color.White, fontSize = 14.sp)
         if (items == null || items.length() == 0) {
-            Text("Nothing yet.", color = Color(0xFFB9B2CC), fontSize = 15.sp)
+            Text(
+                if (parsed?.optBoolean("found") == true) "The memory file is on this PC. Nothing is in it yet."
+                else "No memory file yet. He keeps one file when he learns something.",
+                color = Color(0xFFB9B2CC),
+                fontSize = 15.sp,
+            )
         } else {
             for (index in 0 until items.length()) {
                 val item = items.optJSONObject(index) ?: continue
@@ -75,7 +80,9 @@ fun MemoryScreen(
                 ) {
                     Text(item.optString("text"), color = Color.White, fontSize = 15.sp)
                     Text(item.optString("source"), color = Color(0xFFB9B2CC), fontSize = 12.sp)
-                    if (kind == "never") {
+                    if (kind == "heard") {
+                        Button(onClick = { onAction("forget|$id") }) { Text("Forget") }
+                    } else if (kind == "never") {
                         Button(onClick = { onAction("forget|$id") }) { Text("Forget") }
                     } else {
                         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {

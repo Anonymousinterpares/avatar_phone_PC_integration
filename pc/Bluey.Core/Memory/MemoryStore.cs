@@ -39,6 +39,29 @@ public sealed class MemoryStore
         lock (_gate) return Read();
     }
 
+    /// <summary>
+    /// Looks for this Windows user's one memory file. Loads it when it is already there.
+    /// If it is missing, copies the newest readable backup into that place.
+    /// Does not create an empty file.
+    /// </summary>
+    public MemoryBook Open()
+    {
+        lock (_gate)
+        {
+            if (File.Exists(FilePath())) return Read();
+            var backup = NewestBackupPath();
+            if (backup == null)
+            {
+                _tooNew = false;
+                _unreadable = false;
+                return new MemoryBook();
+            }
+            Directory.CreateDirectory(_folder);
+            File.Copy(backup, FilePath(), false);
+            return Read();
+        }
+    }
+
     public bool Save(MemoryBook book)
     {
         lock (_gate)
@@ -127,6 +150,18 @@ public sealed class MemoryStore
                     source = "You said it",
                 });
             }
+            foreach (var heard in book.Observations)
+            {
+                var times = heard.Count == 1 ? "1 time" : heard.Count + " times";
+                items.Add(new
+                {
+                    id = "heard:" + heard.Phrase,
+                    kind = "heard",
+                    text = "Heard \"" + heard.Phrase + "\" " + times + ". Not a habit yet.",
+                    use = "heard",
+                    source = "It happened " + times,
+                });
+            }
             return JsonSerializer.Serialize(new
             {
                 learn,
@@ -134,6 +169,7 @@ public sealed class MemoryStore
                 quiet,
                 tooNew = _tooNew,
                 unreadable = _unreadable,
+                found = File.Exists(FilePath()),
                 note = note ?? "",
                 items,
                 backups = List().Select(copy => new { name = copy.Name, label = copy.Label, count = copy.Count }),
@@ -164,7 +200,6 @@ public sealed class MemoryStore
 
     private MemoryBook Read()
     {
-        Directory.CreateDirectory(_folder);
         var path = FilePath();
         if (!File.Exists(path))
         {
@@ -205,10 +240,32 @@ public sealed class MemoryStore
         return book;
     }
 
+    private string? NewestBackupPath()
+    {
+        var backups = Path.Combine(_folder, "backups");
+        if (!Directory.Exists(backups)) return null;
+        foreach (var file in new DirectoryInfo(backups).GetFiles("*.json").OrderByDescending(item => item.Name))
+        {
+            try
+            {
+                var book = Parse(File.ReadAllText(file.FullName));
+                if (book.Version > UserMemory.FormatVersion) continue;
+                return file.FullName;
+            }
+            catch (JsonException)
+            {
+                continue;
+            }
+        }
+        return null;
+    }
+
     private void Write(MemoryBook book)
     {
-        Directory.CreateDirectory(_folder);
         var path = FilePath();
+        var empty = book.Habits.Count + book.Likes.Count + book.Never.Count + book.Observations.Count == 0;
+        if (!File.Exists(path) && empty) return;
+        Directory.CreateDirectory(_folder);
         var temp = path + ".tmp";
         File.WriteAllText(temp, JsonSerializer.Serialize(book, Json));
         File.Move(temp, path, true);

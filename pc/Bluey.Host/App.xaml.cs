@@ -45,6 +45,7 @@ public partial class App : System.Windows.Application
         var desk = new WindowsDesk(() => store.Load().ComputerControl, visible => _overlay.SetVisible(visible));
         _speaker = new SupertonicSpeaker(speech);
         _memory = new MemoryStore();
+        _memory.Open();
         _session = new CharacterSession(brains, desk, _speaker, _memory);
         _session.AllowLearning = () => !_help.IsHelper(PhoneLink.CurrentClientId);
         brains.LiveMemoryNote = () =>
